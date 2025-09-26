@@ -1,0 +1,45 @@
+# ====== Fichiers temporaires Ansible ======
+*.retry
+*.log
+*.swp
+*.tmp
+
+# ====== Variables sensibles ======
+.vault_pass.txt
+vault-pass.txt
+*.vault.yml
+*vault*.yml
+
+# ====== Inventaires privés (si tu veux séparer prod/lab) ======
+inventory/private/
+inventory/production/
+inventory/dev/
+
+# ====== Fichiers secrets (clés SSH, mots de passe, certificats) ======
+*.pem
+*.key
+*.crt
+*.pub
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+
+# ====== Répertoires IDE ======
+.vscode/
+.idea/
+*.code-workspace
+
+# ====== Environnements Python (si tu utilises ansible-lint ou Molecule) ======
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# ====== Tests Molecule (optionnel) ======
+.molecule/
+
+# ====== Autres ======
+.DS_Store
+Thumbs.db
+
