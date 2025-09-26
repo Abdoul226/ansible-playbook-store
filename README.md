@@ -23,6 +23,28 @@ Chaque playbook est **testé, documenté** et conçu pour être directement util
 
 ## 📂 Structure du projet
 
+```perl
+ansible-playbook-store/
+│
+├── inventory/
+│   ├── hosts.ini         # Inventaire des machines
+│   └── group_vars/       # Variables globales par groupe
+│
+├── playbooks/
+│   ├── system/           # Playbooks liés au système
+│   ├── web/              # Serveurs web
+│   ├── devops/           # CI/CD & outils DevOps
+│   ├── db/               # Bases de données
+│   ├── monitoring/       # Monitoring & logging
+│   ├── security/         # Sécurité & durcissement
+│   └── k8s/              # Kubernetes & containers
+│
+├── roles/                # Rôles Ansible réutilisables
+├── docs/                 # Documentation détaillée
+└── Makefile              # Commandes rapides
+```
+
+
 ansible-playbook-store/
 ├── inventory/
 │ ├── hosts.ini # Inventaire des machines
