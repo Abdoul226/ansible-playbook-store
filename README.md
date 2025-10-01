@@ -87,28 +87,6 @@ ansible-playbook-store/
 └── Makefile              # Commandes rapides (ex: make ping, make deploy)
 ```
 
-
-```perl
-ansible-playbook-store/
-│
-├── inventory/
-│   ├── hosts.ini         # Inventaire des machines
-│   └── group_vars/       # Variables globales par groupe
-│
-├── playbooks/
-│   ├── system/           # Playbooks liés au système
-│   ├── web/              # Serveurs web
-│   ├── devops/           # CI/CD & outils DevOps
-│   ├── db/               # Bases de données
-│   ├── monitoring/       # Monitoring & logging
-│   ├── security/         # Sécurité & durcissement
-│   └── k8s/              # Kubernetes & containers
-│
-├── roles/                # Rôles Ansible réutilisables
-├── docs/                 # Documentation détaillée
-└── Makefile              # Commandes rapides
-```
-
 ---
 
 ## 🛠️ Prérequis
@@ -160,14 +138,83 @@ Chaque catégorie possède sa doc dédiée :
 ---
 
 ## 🔥 Liste des playbooks
+# 📖 Table des matières – 50 Playbooks Ansible
 
-- System : gestion utilisateurs, mise à jour, SSH, timezone…
-- Web : Nginx, Apache, reverse proxy, load balancer…
-- DevOps : Docker, Jenkins, GitLab Runner, ArgoCD...
-- DB : MySQL, PostgreSQL, Redis, MongoDB…
-- Monitoring : Prometheus, Grafana, Node Exporter, ELK…
-- Security : firewall, Fail2ban, hardening SSH, VPN…
-- Kubernetes : K3s, ingress-nginx, MetalLB, Longhorn…
+## 🔹 Catégorie 1 : Système (7)
+1. [Créer un utilisateur administrateur](docs/system.md#créer-un-utilisateur-administrateur)  
+2. [Mettre à jour les paquets](docs/system.md#mettre-à-jour-les-paquets)  
+3. [Configurer SSH (désactiver root, changer port)](docs/system.md#configurer-ssh-désactiver-root-changer-port)  
+4. [Configurer timezone & locale](docs/system.md#configurer-timezone--locale)  
+5. [Gérer les partitions & montage](docs/system.md#gérer-les-partitions--montage)  
+6. [Installer les utilitaires système (htop, curl…)](docs/system.md#installer-les-utilitaires-système-htop-curl)  
+7. [Sauvegarder /etc](docs/system.md#sauvegarder-etc)  
+
+---
+
+## 🔹 Catégorie 2 : Web (7)
+8. [Installer Nginx](docs/web.md#installer-nginx)  
+9. [Installer Apache2](docs/web.md#installer-apache2)  
+10. [Déployer une app PHP avec Apache](docs/web.md#déployer-une-app-php-avec-apache)  
+11. [Déployer une app Python Flask avec Nginx + Gunicorn](docs/web.md#déployer-une-app-python-flask-avec-nginx--gunicorn)  
+12. [Configurer HTTPS avec Let’s Encrypt](docs/web.md#configurer-https-avec-lets-encrypt)  
+13. [Configurer un reverse proxy Nginx](docs/web.md#configurer-un-reverse-proxy-nginx)  
+14. [Load balancer avec HAProxy](docs/web.md#load-balancer-avec-haproxy)  
+
+---
+
+## 🔹 Catégorie 3 : DevOps (10)
+15. [Installer Docker](docs/devops.md#installer-docker)  
+16. [Installer Docker Compose](docs/devops.md#installer-docker-compose)  
+17. [Déployer une stack avec Compose (ex: WordPress + MySQL)](docs/devops.md#déployer-une-stack-avec-compose-ex-wordpress--mysql)  
+18. [Installer Jenkins](docs/devops.md#installer-jenkins)  
+19. [Installer GitLab Runner](docs/devops.md#installer-gitlab-runner)  
+20. [Déployer une pipeline CI/CD basique](docs/devops.md#déployer-une-pipeline-cicd-basique)  
+21. [Installer Ansible sur un hôte](docs/devops.md#installer-ansible-sur-un-hôte)  
+22. [Installer ArgoCD sur Kubernetes](docs/devops.md#installer-argocd-sur-kubernetes)  
+23. [Installer Helm](docs/devops.md#installer-helm)  
+24. [Configurer un registre privé Docker](docs/devops.md#configurer-un-registre-privé-docker)  
+
+---
+
+## 🔹 Catégorie 4 : Bases de données (6)
+25. [Installer MySQL](docs/db.md#installer-mysql)  
+26. [Installer PostgreSQL](docs/db.md#installer-postgresql)  
+27. [Sauvegarder une base MySQL (dump)](docs/db.md#sauvegarder-une-base-mysql-dump)  
+28. [Restaurer une base MySQL](docs/db.md#restaurer-une-base-mysql)  
+29. [Installer Redis](docs/db.md#installer-redis)  
+30. [Installer MongoDB](docs/db.md#installer-mongodb)  
+
+---
+
+## 🔹 Catégorie 5 : Monitoring & Logging (7)
+31. [Installer Prometheus](docs/monitoring.md#installer-prometheus)  
+32. [Installer Grafana](docs/monitoring.md#installer-grafana)  
+33. [Déployer Node Exporter](docs/monitoring.md#déployer-node-exporter)  
+34. [Déployer cAdvisor](docs/monitoring.md#déployer-cadvisor)  
+35. [Installer ELK (Elasticsearch + Logstash + Kibana)](docs/monitoring.md#installer-elk-elasticsearch--logstash--kibana)  
+36. [Installer Filebeat](docs/monitoring.md#installer-filebeat)  
+37. [Installer Loki + Promtail](docs/monitoring.md#installer-loki--promtail)  
+
+---
+
+## 🔹 Catégorie 6 : Sécurité (7)
+38. [Configurer Firewall (UFW/iptables)](docs/security.md#configurer-firewall-ufwiptables)  
+39. [Installer Fail2ban](docs/security.md#installer-fail2ban)  
+40. [Activer auditd (surveillance système)](docs/security.md#activer-auditd-surveillance-système)  
+41. [Mettre en place un IDS (Snort/Suricata)](docs/security.md#mettre-en-place-un-ids-snortsuricata)  
+42. [Durcissement SSH (root, clés uniquement)](docs/security.md#durcissement-ssh-root-clés-uniquement)  
+43. [Scanner vulnérabilités avec OpenVAS](docs/security.md#scanner-vulnérabilités-avec-openvas)  
+44. [Mettre en place un VPN WireGuard](docs/security.md#mettre-en-place-un-vpn-wireguard)  
+
+---
+
+## 🔹 Catégorie 7 : Kubernetes & Containers (6)
+45. [Installer K3s (cluster léger Kubernetes)](docs/k8s.md#installer-k3s-cluster-léger-kubernetes)  
+46. [Déployer Nginx Ingress Controller](docs/k8s.md#déployer-nginx-ingress-controller)  
+47. [Configurer MetalLB pour LoadBalancer on-premises](docs/k8s.md#configurer-metallb-pour-loadbalancer-on-premises)  
+48. [Déployer une app (Flask ou NodeJS) sur K8s](docs/k8s.md#déployer-une-app-flask-ou-nodejs-sur-k8s)  
+49. [Installer metrics-server](docs/k8s.md#installer-metrics-server)  
+50. [Déployer Longhorn pour stockage persistant](docs/k8s.md#déployer-longhorn-pour-stockage-persistant)  
 
 ---
 
