@@ -138,9 +138,8 @@ Chaque catégorie possède sa doc dédiée :
 ---
 
 ## 🔥 Liste des playbooks
-# 📖 Table des matières – 50 Playbooks Ansible
 
-## 🔹 Catégorie 1 : Système (7)
+### 🔹 Catégorie 1 : Système (7)
 1. [Créer un utilisateur administrateur](docs/system.md#créer-un-utilisateur-administrateur)  
 2. [Mettre à jour les paquets](docs/system.md#mettre-à-jour-les-paquets)  
 3. [Configurer SSH (désactiver root, changer port)](docs/system.md#configurer-ssh-désactiver-root-changer-port)  
@@ -151,7 +150,7 @@ Chaque catégorie possède sa doc dédiée :
 
 ---
 
-## 🔹 Catégorie 2 : Web (7)
+### 🔹 Catégorie 2 : Web (7)
 8. [Installer Nginx](docs/web.md#installer-nginx)  
 9. [Installer Apache2](docs/web.md#installer-apache2)  
 10. [Déployer une app PHP avec Apache](docs/web.md#déployer-une-app-php-avec-apache)  
@@ -162,7 +161,7 @@ Chaque catégorie possède sa doc dédiée :
 
 ---
 
-## 🔹 Catégorie 3 : DevOps (10)
+### 🔹 Catégorie 3 : DevOps (10)
 15. [Installer Docker](docs/devops.md#installer-docker)  
 16. [Installer Docker Compose](docs/devops.md#installer-docker-compose)  
 17. [Déployer une stack avec Compose (ex: WordPress + MySQL)](docs/devops.md#déployer-une-stack-avec-compose-ex-wordpress--mysql)  
@@ -176,7 +175,7 @@ Chaque catégorie possède sa doc dédiée :
 
 ---
 
-## 🔹 Catégorie 4 : Bases de données (6)
+### 🔹 Catégorie 4 : Bases de données (6)
 25. [Installer MySQL](docs/db.md#installer-mysql)  
 26. [Installer PostgreSQL](docs/db.md#installer-postgresql)  
 27. [Sauvegarder une base MySQL (dump)](docs/db.md#sauvegarder-une-base-mysql-dump)  
@@ -186,7 +185,7 @@ Chaque catégorie possède sa doc dédiée :
 
 ---
 
-## 🔹 Catégorie 5 : Monitoring & Logging (7)
+### 🔹 Catégorie 5 : Monitoring & Logging (7)
 31. [Installer Prometheus](docs/monitoring.md#installer-prometheus)  
 32. [Installer Grafana](docs/monitoring.md#installer-grafana)  
 33. [Déployer Node Exporter](docs/monitoring.md#déployer-node-exporter)  
@@ -197,7 +196,7 @@ Chaque catégorie possède sa doc dédiée :
 
 ---
 
-## 🔹 Catégorie 6 : Sécurité (7)
+### 🔹 Catégorie 6 : Sécurité (7)
 38. [Configurer Firewall (UFW/iptables)](docs/security.md#configurer-firewall-ufwiptables)  
 39. [Installer Fail2ban](docs/security.md#installer-fail2ban)  
 40. [Activer auditd (surveillance système)](docs/security.md#activer-auditd-surveillance-système)  
@@ -208,7 +207,7 @@ Chaque catégorie possède sa doc dédiée :
 
 ---
 
-## 🔹 Catégorie 7 : Kubernetes & Containers (6)
+### 🔹 Catégorie 7 : Kubernetes & Containers (6)
 45. [Installer K3s (cluster léger Kubernetes)](docs/k8s.md#installer-k3s-cluster-léger-kubernetes)  
 46. [Déployer Nginx Ingress Controller](docs/k8s.md#déployer-nginx-ingress-controller)  
 47. [Configurer MetalLB pour LoadBalancer on-premises](docs/k8s.md#configurer-metallb-pour-loadbalancer-on-premises)  
