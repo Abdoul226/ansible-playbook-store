@@ -1,0 +1,48 @@
+---
+- name: Créer un utilisateur administrateur
+  hosts: all
+  become: yes
+
+  vars:
+    new_user: devops
+    new_user_password: "SuperSecret123"
+    # ⚠️ Ce filtre peut nécessiter passlib. Voir note plus bas.
+    new_user_password_hash: "{{ new_user_password | password_hash('sha512') }}"
+    public_key_path: "~/.ssh/id_ed25519.pub"   # mets ici le chemin de ta clé publique sur le contrôleur
+
+  tasks:
+    - name: Créer l’utilisateur
+      ansible.builtin.user:
+        name: "{{ new_user }}"
+        password: "{{ new_user_password_hash }}"
+        groups: sudo
+        append: yes
+        shell: /bin/bash
+        state: present
+        create_home: yes
+
+    - name: Créer un répertoire .ssh
+      ansible.builtin.file:
+        path: "/home/{{ new_user }}/.ssh"
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: '0700'
+
+    - name: Autoriser la clé publique pour {{ new_user }}
+      ansible.builtin.authorized_key:
+        user: "{{ new_user }}"
+        state: present
+        key: "{{ lookup('file', public_key_path) }}"
+        path: "/home/{{ new_user }}/.ssh/authorized_keys"
+        manage_dir: no    # répertoire déjà créé juste avant
+
+    - name: Sudo sans mot de passe via un drop-in propre
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ new_user }}"
+        content: "{{ new_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        owner: root
+        group: root
+        mode: '0440'
+        validate: "visudo -cf %s"
+
