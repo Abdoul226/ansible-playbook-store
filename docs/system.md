@@ -1,16 +1,14 @@
 # ⚙️ Playbooks Système – Ansible Playbook Store
 Cette section regroupe des playbooks utiles pour la gestion de base des serveurs Linux.
 Ils couvrent les opérations essentielles : création d’utilisateurs, mise à jour des paquets, configuration système, etc.
+---
 
-
-## ### Créer un utilisateur administrateur
+## 1. Créer un utilisateur administrateur
 
 ### 📌 Objectif
 Automatiser la création d’un utilisateur avec droits administrateur (`sudo`), accès SSH et clé publique configurée.
 
----
-
-#### Actions principales :
+### Actions principales :
 
 * Création de l’utilisateur avec mot de passe haché (SHA-512).
 * Ajout au groupe sudo.
@@ -18,7 +16,7 @@ Automatiser la création d’un utilisateur avec droits administrateur (`sudo`),
 * Déploiement d’une clé publique dans authorized_keys.
 * Ajout à sudoers pour exécuter des commandes sans mot de passe.
 
-#### Variables principales 
+### Variables principales 
 ```perl
 | Variable                   | Valeur par défaut        | Description |
 |----------------------------|--------------------------|-------------|
@@ -28,7 +26,7 @@ Automatiser la création d’un utilisateur avec droits administrateur (`sudo`),
 | `src` (clé publique)       | `files/id_rsa.pub`       | Chemin vers la clé publique à déployer |
 ```
 
-## ▶️ Exemples d’utilisation
+### ▶️ Exemples d’utilisation
 * Créer un utilisateur aziz :
 ```bash
 ansible-playbook -i inventory/hosts.ini playbooks/system/create-user.yml -e "new_user=aziz"
@@ -39,26 +37,58 @@ ansible-playbook -i inventory/hosts.ini playbooks/system/create-user.yml \
   -e "new_user=aziz new_user_password=UltraSecret456"
 ```
 
-##⚠️  Bonnes pratiques :
+###⚠️  Bonnes pratiques :
 
 - Toujours définir un mot de passe fort ou utiliser une clé SSH.
 - Stocker les mots de passe dans Ansible Vault plutôt que dans des variables en clair.
 - Tester la connexion avec le nouvel utilisateur avant de désactiver l’accès root.
 - Ne jamais supprimer tous les accès administrateurs d’un serveur en production.
+---
 
-2. update-packages.yml (à venir)
+## 2. Mettre à jour les paquets (`update-packages.yml`)
 
-But : Mettre à jour les paquets système.
+**Objectif :**  
+Effectuer une mise à jour complète des paquets sur Debian/Ubuntu et distributions RHEL-like (CentOS/Rocky/Alma), avec options d’`autoremove`, nettoyage de cache et **redémarrage conditionnel** si nécessaire (ex. mise à jour noyau).
 
-Actions principales :
+### Variables
 
-apt upgrade pour Ubuntu/Debian.
+```perl
+| Variable               | Défaut  | Description |
+|------------------------|---------|-------------|
+| `do_dist_upgrade`      | `true`  | Debian/Ubuntu : `full-upgrade` (gère changements de dépendances/kernels). Si `false`, fait un simple `upgrade`. |
+| `do_autoremove`        | `true`  | Supprimer les paquets devenus inutiles (Debian/Ubuntu). |
+| `do_autoclean`         | `true`  | Nettoyer l’ancien cache APT (Debian/Ubuntu). |
+| `reboot_if_required`   | `true`  | Redémarrer automatiquement si nécessaire. |
+| `reboot_timeout`       | `900`   | Timeout du reboot (secondes). |
+| `cache_valid_time`     | `3600`  | Durée de validité du cache APT (évite les `apt update` trop fréquents). |
+| `package_state_latest` | `true`  | RHEL : applique `state=latest` pour mettre à jour tous les paquets. |
+```
+### Exemples d’exécution
 
-yum update pour RedHat/CentOS.
+- Mise à jour standard + reboot si nécessaire :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/update-packages.yml
+```
+- Sans dist-upgrade ni reboot :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/update-packages.yml \
+  -e "do_dist_upgrade=false reboot_if_required=false"
+```
+- Exécution dry-run (prévisualiser sans appliquer) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/update-packages.yml --check --diff
+```
+**Notes & bonnes pratiques**
 
-Optionnel : nettoyage automatique (autoremove).
+- **Debian/Ubuntu** : un fichier ```bash /var/run/reboot-required``` indique qu’un reboot est nécessaire.
+- **RHEL-like** : ```bash needs-restarting -r``` (paquet ```bash yum-utils```/```bash dnf-plugins-core```) renvoie ```bash rc=1``` si un reboot est recommandé.
+- Planifie ce playbook régulièrement via **cron/CI** (ex. hebdomadaire) et **surveille** les reboots automatiques en prod.
+- Combine avec un **maintenance window** si tu actives ```bash reboot_if_required``` en environnement critique.
 
-3. configure-ssh.yml (lié à la sécurité mais basique ici)
+
+---
+
+## 3. configure-ssh.yml (lié à la sécurité mais basique ici)
 
 But : Configurer les paramètres SSH principaux.
 
@@ -69,8 +99,9 @@ Désactiver l’accès root.
 Forcer l’authentification par clé SSH.
 
 Définir un port personnalisé.
+---
 
-4. set-timezone.yml (à venir)
+## 4. set-timezone.yml (à venir)
 
 But : Configurer le fuseau horaire du serveur.
 
@@ -83,8 +114,9 @@ Exemple :
     - name: Configurer timezone
       timezone:
         name: "Europe/Paris"
+---
 
-5. install-tools.yml (à venir)
+## 5. install-tools.yml (à venir)
 
 But : Installer des utilitaires essentiels (curl, htop, git, vim…).
 
@@ -99,24 +131,7 @@ Exemple :
         name: [git, curl, htop, vim]
         state: present
 
-⚙️ Variables personnalisables (exemple create-user.yml)
-Variable	Valeur par défaut	Description
-new_user	devops	Nom du nouvel utilisateur
-new_user_password	"SuperSecret123"	Mot de passe en clair (sera haché automatiquement)
-new_user_password_hash	généré par Ansible	Hash SHA-512 du mot de passe
-src (clé publique)	files/id_rsa.pub	Fichier contenant la clé publique
-▶️ Exemples d’utilisation
-Créer un utilisateur aziz
-ansible-playbook -i inventory/hosts.ini playbooks/system/create-user.yml -e "new_user=aziz"
-
-Créer un utilisateur avec mot de passe personnalisé
-ansible-playbook -i inventory/hosts.ini playbooks/system/create-user.yml \
-  -e "new_user=aziz new_user_password=UltraSecret456"
-
-Mettre à jour les paquets système
-ansible-playbook -i inventory/hosts.ini playbooks/system/update-packages.yml
-
-🧑‍💻 Bonnes pratiques générales
+## 🧑‍💻 Bonnes pratiques générales
 
 Toujours créer un utilisateur non-root pour l’administration quotidienne.
 
