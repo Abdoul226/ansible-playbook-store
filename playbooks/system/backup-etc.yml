@@ -1,0 +1,84 @@
+---
+# playbooks/system/backup-etc.yml
+- name: Sauvegarder /etc avec rotation
+  hosts: all
+  become: yes
+  vars:
+    backup_dir: "/var/backups/etc"        # Dossier de sauvegarde local
+    backup_prefix: "etc"                  # Préfixe des fichiers d'archive
+    keep_last: 7                          # Nombre de sauvegardes à conserver
+    exclude_paths:                        # Chemins à exclure de l'archive
+      - "/etc/mtab"
+      - "/etc/fstab.backup"
+      - "/etc/ssl/private"                # exemple: clés privées (à adapter)
+      - "/etc/pacman.d/gnupg"             # selon distro
+    # Timestamp: YYYYMMDD-HHMMSS
+    ts: "{{ ansible_date_time.year }}{{ ansible_date_time.month }}{{ ansible_date_time.day }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}"
+    backup_file: "{{ backup_dir }}/{{ backup_prefix }}-{{ ts }}.tar.gz"
+
+  pre_tasks:
+    - name: Créer le dossier de sauvegarde (si absent)
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+  tasks:
+    - name: Archiver /etc en .tar.gz (avec exclusions)
+      archive:
+        path:
+          - /etc
+        dest: "{{ backup_file }}"
+        format: gz
+        exclude_path: "{{ exclude_paths | default([]) }}"
+      tags: [backup, archive]
+
+    - name: Sécuriser l’archive (propriétaire root, lecture restreinte)
+      file:
+        path: "{{ backup_file }}"
+        owner: root
+        group: root
+        mode: '0640'
+      tags: [backup]
+
+    - name: Afficher la taille de la sauvegarde créée
+      stat:
+        path: "{{ backup_file }}"
+      register: backup_stat
+      tags: [backup, verify]
+
+    - name: Résumé sauvegarde
+      debug:
+        msg: "Sauvegarde créée: {{ backup_file }} (taille: {{ (backup_stat.stat.size | default(0)) | human_readable }})"
+      tags: [backup, verify]
+
+    # -------- Rotation : conserver seulement keep_last archives les plus récentes --------
+    - name: Lister les archives existantes
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "{{ backup_prefix }}-*.tar.gz"
+        file_type: file
+        recurse: no
+      register: found_archives
+      tags: [rotate]
+
+    - name: Classer par date (récent → ancien)
+      set_fact:
+        archives_sorted: "{{ found_archives.files | sort(attribute='mtime', reverse=True) }}"
+      tags: [rotate]
+
+    - name: Déterminer les archives à supprimer (au-delà de keep_last)
+      set_fact:
+        archives_to_delete: "{{ archives_sorted[keep_last:] if (archives_sorted | length) > keep_last else [] }}"
+      tags: [rotate]
+
+    - name: Supprimer les anciennes archives
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ archives_to_delete }}"
+      when: archives_to_delete | length > 0
+      tags: [rotate]
+

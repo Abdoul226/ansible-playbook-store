@@ -207,23 +207,51 @@ ansible-playbook -i inventory/hosts.ini playbooks/system/install-tools.yml \
 - Centraliser des paquets spécifiques par **environnement** via `group_vars`/ (ex: `group_vars/webservers.yml`).
 - Ajouter `jq`, `ncdu`, `tmux`, `rsync`, `ripgrep (rg)` selon tes habitudes.
 - Coupler avec `update-packages.yml` dans tes pipelines de préparation d’hôtes.
+---
 
+## 6. Sauvegarder /etc (`backup-etc.yml`)
 
+**Objectif :**  
+Créer une **archive compressée** de `/etc` avec un **timestamp** (ex: `etc-20251003-141530.tar.gz`) et mettre en place une **rotation automatique** (on garde seulement les `keep_last` dernières sauvegardes).
 
+### Variables
+```perl
+| Variable        | Défaut              | Description |
+|-----------------|---------------------|-------------|
+| `backup_dir`    | `/var/backups/etc`  | Répertoire de destination des archives |
+| `backup_prefix` | `etc`               | Préfixe de nommage des fichiers |
+| `keep_last`     | `7`                 | Nombre d’archives à conserver |
+| `exclude_paths` | voir playbook       | Chemins exclus de l’archive (ex: clés privées) |
+```
+> **Format de fichier :** `{{ backup_prefix }}-YYYYMMDD-HHMMSS.tar.gz`
 
+### Exemples d’exécution
 
-But : Installer des utilitaires essentiels (curl, htop, git, vim…).
+- Sauvegarde standard + rotation (garde 7 archives) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/backup-etc.yml
+```
+- Changer le dossier et garder 14 archives :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/backup-etc.yml \
+  -e "backup_dir=/srv/backups/etc keep_last=14"
+```
+- Exclure d’autres chemins sensibles :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/backup-etc.yml \
+  -e "exclude_paths=['/etc/ssl/private','/etc/shadow']"
+```
+**Bonnes pratiques**
 
-Exemple :
+- **Sécurité** : l’archive est en `0640` et stockée sous `root:root`. Évite d’y inclure des secrets comme `/etc/shadow` si tu exportes hors de l’hôte.
 
-- name: Installer utilitaires
-  hosts: all
-  become: yes
-  tasks:
-    - name: Installer paquets
-      package:
-        name: [git, curl, htop, vim]
-        state: present
+- **Stockage externe** : pour plus de résilience, réplique ensuite `{{ backup_dir }}` vers un autre disque/serveur (rsync, NFS, sauvegarde cloud).
+
+- **Planification** : exécute ce playbook via **cron/CI** (quotidien, hebdo) selon tes besoins.
+
+- **Restauration** : extraire avec `tar -xzf etc-YYYYMMDD-HHMMSS.tar.gz -C /` (⚠️ à faire prudemment, idéalement fichier par fichier).
+
+## 7. Partition
 
 ## 🧑‍💻 Bonnes pratiques générales
 
