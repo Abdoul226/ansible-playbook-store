@@ -142,7 +142,8 @@ Définir un **fuseau horaire cohérent** sur l’ensemble des serveurs pour gara
 
 - Appliquer le fuseau horaire **Europe/Paris** (par défaut) :
 ```bash
-ansible-playbook -i inventory/hosts.ini playbooks/system/set-timezone.yml```
+ansible-playbook -i inventory/hosts.ini playbooks/system/set-timezone.yml
+```
 - Appliquer le fuseau horaire **UTC** :
 ```bash
 ansible-playbook -i inventory/hosts.ini playbooks/system/set-timezone.yml -e "timezone=UTC"
@@ -169,7 +170,47 @@ Bonnes pratiques
 
 ---
 
-## 5. install-tools.yml (à venir)
+## 5. Installer les utilitaires système (`install-tools.yml`)
+
+**Objectif :**  
+Installer rapidement un ensemble d’outils de base (git, curl, htop, vim, etc.) sur Debian/Ubuntu et distributions RHEL-like.
+
+### Variables
+```perl
+| Variable              | Défaut                                                                 | Description |
+|-----------------------|------------------------------------------------------------------------|-------------|
+| `common_packages`     | `['git','curl','htop','vim','unzip','tar','wget','net-tools','lsof','tree']` | Liste standard d’outils installés sur toutes les machines |
+| `extra_packages`      | `[]`                                                                   | Paquets additionnels à installer (passés en `-e`) |
+| `apt_update_cache`    | `true`                                                                 | Mettre à jour le cache APT avant installation (Debian/Ubuntu) |
+| `apt_cache_valid_time`| `3600`                                                                 | Validité du cache APT (secondes) |
+```
+### Exemples d’exécution
+
+- Installation standard :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/install-tools.yml
+```
+- Ajouter des paquets supplémentaires :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/install-tools.yml \
+  -e "extra_packages=['jq','ncdu']"
+
+```
+- Désactiver l’`apt update` préalable (si déjà fait par ailleurs) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/install-tools.yml \
+  -e "apt_update_cache=false"
+```
+
+**Bonnes pratiques**
+
+- Centraliser des paquets spécifiques par **environnement** via `group_vars`/ (ex: `group_vars/webservers.yml`).
+- Ajouter `jq`, `ncdu`, `tmux`, `rsync`, `ripgrep (rg)` selon tes habitudes.
+- Coupler avec `update-packages.yml` dans tes pipelines de préparation d’hôtes.
+
+
+
+
 
 But : Installer des utilitaires essentiels (curl, htop, git, vim…).
 

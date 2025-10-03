@@ -1,0 +1,64 @@
+---
+# playbooks/system/install-tools.yml
+- name: Installer les utilitaires système de base
+  hosts: all
+  become: yes
+  vars:
+    # Paquets par défaut (communs)
+    common_packages:
+      - git
+      - curl
+      - htop
+      - vim
+      - unzip
+      - tar
+      - wget
+      - net-tools    # ifconfig, netstat (legacy mais pratique)
+      - lsof
+      - tree
+    # Tu peux passer d'autres paquets en variable: -e "extra_packages=['jq','ncdu']"
+    extra_packages: []
+
+    # Pour Debian/Ubuntu, on peut activer un apt update rapide
+    apt_update_cache: true
+    apt_cache_valid_time: 3600
+
+  pre_tasks:
+    - name: (Debian/Ubuntu) Mettre à jour le cache APT si demandé
+      apt:
+        update_cache: yes
+        cache_valid_time: "{{ apt_cache_valid_time }}"
+      when: ansible_os_family == "Debian" and apt_update_cache | bool
+      tags: [packages, apt]
+
+  tasks:
+    - name: (Debian/Ubuntu) Installer les utilitaires
+      apt:
+        name: "{{ common_packages + extra_packages }}"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [packages, apt]
+
+    - name: (RHEL-like) Installer les utilitaires
+      package:
+        name: "{{ common_packages + extra_packages }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [packages, yum, dnf]
+
+    - name: Vérifier les versions installées (git, curl, vim)
+      command: "{{ item }} --version"
+      loop:
+        - git
+        - curl
+        - vim
+      register: tools_versions
+      changed_when: false
+      failed_when: false
+      tags: [verify]
+
+    - name: Afficher les versions détectées
+      debug:
+        var: tools_versions.results
+      tags: [verify]
+
