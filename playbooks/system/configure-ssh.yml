@@ -1,0 +1,94 @@
+---
+# playbooks/system/configure-ssh.yml
+- name: Config SSH basique (port, root login, password auth)
+  hosts: all
+  become: yes
+  vars:
+    ssh_port: 22                    # ⚠️ si tu changes ce port, ouvre le firewall AVANT
+    permit_root_login: "prohibit-password"  # options: yes | no | prohibit-password
+    password_auth: "no"             # "no" = clés SSH uniquement (recommandé)
+    pubkey_auth: "yes"
+    override_path: "/etc/ssh/sshd_config.d/20-basic.conf"
+
+  pre_tasks:
+    - name: S'assurer que OpenSSH server est installé (Debian/Ubuntu)
+      apt:
+        name: openssh-server
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: [ssh, packages]
+
+    - name: S'assurer que OpenSSH server est installé (RHEL-like)
+      package:
+        name: openssh-server
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [ssh, packages]
+
+    - name: Créer le dossier d’overrides s’il n’existe pas
+      file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        mode: '0755'
+
+    - name: Sauvegarder le fichier principal (une seule fois)
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup
+        remote_src: yes
+        force: no
+      ignore_errors: yes
+      tags: [backup]
+
+  tasks:
+    - name: Écrire la configuration “basique” dans un override dédié
+      blockinfile:
+        path: "{{ override_path }}"
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+        block: |
+          # ---- SSH Basic Config (managed by Ansible) ----
+          Port {{ ssh_port }}
+          Protocol 2
+          PermitRootLogin {{ permit_root_login }}
+          PasswordAuthentication {{ password_auth }}
+          PubkeyAuthentication {{ pubkey_auth }}
+          ChallengeResponseAuthentication no
+          UsePAM yes
+      notify: Restart sshd
+      tags: [ssh, basic]
+
+    - name: (Optionnel) Ouvrir le port SSH si UFW est présent (Debian/Ubuntu)
+      command: ufw allow {{ ssh_port }}/tcp
+      register: ufw_result
+      failed_when: false
+      changed_when: "'Skipping adding' not in ufw_result.stdout"
+      when: ansible_os_family == "Debian"
+      tags: [firewall]
+
+    - name: (Optionnel) Ouvrir le port SSH si firewalld est présent (RHEL-like)
+      firewalld:
+        port: "{{ ssh_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: ansible_os_family == "RedHat"
+      failed_when: false
+      tags: [firewall]
+
+    - name: Valider la configuration (sshd -t)
+      command: sshd -t
+      register: sshd_check
+      changed_when: false
+      failed_when: sshd_check.rc != 0
+      tags: [validate]
+
+  handlers:
+    - name: Restart sshd
+      service:
+        name: "{{ 'sshd' if ansible_os_family == 'RedHat' else 'ssh' }}"
+        state: restarted
+

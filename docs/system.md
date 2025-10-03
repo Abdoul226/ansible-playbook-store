@@ -37,11 +37,11 @@ ansible-playbook -i inventory/hosts.ini playbooks/system/create-user.yml \
   -e "new_user=aziz new_user_password=UltraSecret456"
 ```
 
-###⚠️  Bonnes pratiques :
+**Bonnes pratiques :**
 
-- Toujours définir un mot de passe fort ou utiliser une clé SSH.
-- Stocker les mots de passe dans Ansible Vault plutôt que dans des variables en clair.
-- Tester la connexion avec le nouvel utilisateur avant de désactiver l’accès root.
+- Toujours définir un mot de passe **fort** ou utiliser une **clé SSH**.
+- Stocker les mots de passe dans **Ansible Vault** plutôt que dans des variables en clair.
+- Tester la connexion avec le nouvel utilisateur avant de désactiver l’accès `root`.
 - Ne jamais supprimer tous les accès administrateurs d’un serveur en production.
 ---
 
@@ -88,17 +88,43 @@ ansible-playbook -i inventory/hosts.ini playbooks/system/update-packages.yml --c
 
 ---
 
-## 3. configure-ssh.yml (lié à la sécurité mais basique ici)
+## 3. Configurer SSH (configure-ssh.yml)
 
-But : Configurer les paramètres SSH principaux.
+**Objectif :**  
+Appliquer une configuration **basique et sûre** de SSH : changer le **port**, désactiver le **login root** par mot de passe et **forcer la clé**.
 
-Actions principales :
+### Variables
+```perl
+| Variable             | Défaut                | Description |
+|---------------------|-----------------------|-------------|
+| `ssh_port`          | `22`                  | Port SSH. Si modifié, ouvrir le firewall avant/après. |
+| `permit_root_login` | `prohibit-password`   | `yes` / `no` / `prohibit-password` (reco) |
+| `password_auth`     | `no`                  | `no` = clés SSH uniquement (recommandé) |
+| `pubkey_auth`       | `yes`                 | Active l’auth par clé publique |
+| `override_path`     | `/etc/ssh/sshd_config.d/20-basic.conf` | Fichier d’override géré par Ansible |
+```
 
-Désactiver l’accès root.
+### Exemples d’exécution
+- Configuration standard (port 22, root interdit en mot de passe, clés uniquement) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/configure-ssh.yml
+```
+- Changer le port en 2222 :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/configure-ssh.yml \
+  -e "ssh_port=2222"
+```
+- Autoriser (temporairement) l’authentification par mot de passe :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/configure-ssh.yml \
+  -e "password_auth=yes"
+```
+**Bonnes pratiques**
+- **Toujours** garder une session SSH ouverte pendant l’application.
+- Vérifier que la **clé publique** de ton utilisateur admin est déjà en place.
+- Si tu modifies ssh_port, **ouvre le firewall** correspondant (UFW/firewalld) et **mets à jour tes règles de sécurité**.
+- Utiliser d’abord --check --diff en environnements sensibles.
 
-Forcer l’authentification par clé SSH.
-
-Définir un port personnalisé.
 ---
 
 ## 4. set-timezone.yml (à venir)
