@@ -1,0 +1,95 @@
+---
+# playbooks/system/update-packages.yml
+- name: Mettre à jour le système (Debian/Ubuntu & RHEL/CentOS/Rocky)
+  hosts: all
+  become: yes
+  vars:
+    # ---- Options génériques ----
+    do_dist_upgrade: true          # Debian/Ubuntu : fait un "full-upgrade" (ex: kernel)
+    do_autoremove: true            # Supprime les paquets devenus inutiles
+    do_autoclean: true             # Nettoie l'ancien cache (Debian/Ubuntu)
+    reboot_if_required: true       # Redémarre si nécessaire (kernel/critical)
+    reboot_timeout: 900            # Timeout du redémarrage en secondes
+    cache_valid_time: 3600         # Évite les apt update trop fréquents (seconds)
+    package_state_latest: true     # RHEL : state=latest (toutes les maj disponibles)
+
+  pre_tasks:
+    - name: Détecter la famille OS
+      debug:
+        msg: "Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }} (famille: {{ ansible_os_family }})"
+
+  tasks:
+    ######################################################################
+    # Debian / Ubuntu
+    ######################################################################
+    - name: (Debian/Ubuntu) Mettre à jour le cache APT
+      apt:
+        update_cache: yes
+        cache_valid_time: "{{ cache_valid_time }}"
+      when: ansible_os_family == "Debian"
+      tags: [update, apt]
+
+    - name: (Debian/Ubuntu) Mise à jour des paquets (full-upgrade ou upgrade)
+      apt:
+        upgrade: "{{ 'dist' if do_dist_upgrade else 'yes' }}"
+      when: ansible_os_family == "Debian"
+      tags: [update, apt]
+
+    - name: (Debian/Ubuntu) Autoremove des paquets obsolètes
+      apt:
+        autoremove: yes
+      when: ansible_os_family == "Debian" and do_autoremove
+      tags: [cleanup, apt]
+
+    - name: (Debian/Ubuntu) Autoclean du cache APT
+      apt:
+        autoclean: yes
+      when: ansible_os_family == "Debian" and do_autoclean
+      tags: [cleanup, apt]
+
+    ######################################################################
+    # RedHat / CentOS / Rocky / Alma (DNF/YUM)
+    ######################################################################
+    - name: (RHEL-like) Mettre à jour le cache DNF/YUM
+      package:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "RedHat" and package_state_latest
+      tags: [update, dnf, yum]
+
+    - name: (RHEL-like) Nettoyage du cache (dnf/yum)
+      command: "{{ item }}"
+      loop:
+        - "{{ (ansible_pkg_mgr == 'dnf') | ternary('dnf','yum') }} clean all"
+      when: ansible_os_family == "RedHat"
+      changed_when: true
+      tags: [cleanup, dnf, yum]
+
+    ######################################################################
+    # Reboot conditionnel (cross-plateforme)
+    ######################################################################
+    - name: (Debian/Ubuntu) Vérifier si un reboot est requis
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_flag_deb
+      when: ansible_os_family == "Debian"
+      tags: [reboot]
+
+    - name: (RHEL-like) Vérifier si un reboot est recommandé (needs-restarting)
+      command: needs-restarting -r
+      register: needs_restarting
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family == "RedHat"
+      tags: [reboot]
+
+    - name: Redémarrer si requis
+      reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: >
+        reboot_if_required and (
+          (ansible_os_family == "Debian" and reboot_flag_deb.stat.exists) or
+          (ansible_os_family == "RedHat" and needs_restarting.rc == 1)
+        )
+      tags: [reboot]
+
