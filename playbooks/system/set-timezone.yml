@@ -1,0 +1,22 @@
+---
+# playbooks/system/set-timezone.yml
+- name: Configurer le fuseau horaire
+  hosts: all
+  become: yes
+  vars:
+    timezone: "Europe/Paris"   # Valeur par défaut
+
+  tasks:
+    - name: Définir le timezone
+      timezone:
+        name: "{{ timezone }}"
+
+    - name: Vérifier la date et le timezone en cours
+      command: timedatectl
+      register: timedatectl_output
+      changed_when: false
+
+    - name: Afficher le résultat
+      debug:
+        msg: "{{ timedatectl_output.stdout }}"
+
