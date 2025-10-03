@@ -1,0 +1,115 @@
+---
+# playbooks/system/partition-mount.yml
+- name: Gérer une partition, un FS et le montage
+  hosts: all
+  become: yes
+
+  vars:
+    # === Paramètres principaux ===
+    device: "/dev/sdb"            # Disque cible (ex: /dev/sdb, /dev/nvme0n1)
+    part_number: 1                # Numéro de partition
+    part_start: "1MiB"            # Début de la partition
+    part_end: "100%"              # Fin de la partition
+    part_label: "gpt"             # Table de partition (msdos|gpt) -> gpt recommandé
+    fs_type: "ext4"               # ext4 | xfs | etc.
+    fs_label: "data"              # Label du FS (optionnel)
+    mount_point: "/data"          # Point de montage
+    mount_options: "defaults,noatime"  # Options fstab
+    owner: "root"                 # Propriétaire du point de montage
+    group: "root"
+    mode: "0755"
+
+    # present -> créer/monter; absent -> démonter/supprimer partition
+    state: "present"
+
+    # Détection du séparateur (nvme/mmcblk nécessitent un 'p' avant le numéro)
+    part_sep: "{{ 'p' if device is match('nvme|mmcblk') else '' }}"
+    part_path: "{{ device }}{{ part_sep }}{{ part_number }}"
+
+  pre_tasks:
+    - name: Vérifier que le disque existe
+      stat:
+        path: "{{ device }}"
+      register: dev_stat
+
+    - name: Échec si le disque n'existe pas
+      fail:
+        msg: "Le device {{ device }} est introuvable sur l'hôte."
+      when: not dev_stat.stat.exists
+
+  tasks:
+    - block:
+        # --- Création/ajustement partition ---
+        - name: Créer/assurer la table de partition ({{ part_label }})
+          parted:
+            device: "{{ device }}"
+            label: "{{ part_label }}"
+          when: part_label is defined
+          tags: [partition]
+
+        - name: Créer/assurer la partition {{ part_number }}
+          parted:
+            device: "{{ device }}"
+            number: "{{ part_number }}"
+            state: present
+            part_start: "{{ part_start }}"
+            part_end: "{{ part_end }}"
+          tags: [partition]
+
+        # --- Système de fichiers ---
+        - name: Créer le système de fichiers s'il n'existe pas
+          filesystem:
+            fstype: "{{ fs_type }}"
+            dev: "{{ part_path }}"
+            opts: "{{ (fs_type == 'ext4') | ternary('', omit) }}"
+            force: no
+            label: "{{ fs_label | default(omit) }}"
+          tags: [filesystem]
+
+        # --- Point de montage & permissions ---
+        - name: Créer le répertoire de montage
+          file:
+            path: "{{ mount_point }}"
+            state: directory
+            owner: "{{ owner }}"
+            group: "{{ group }}"
+            mode: "{{ mode }}"
+          tags: [mount]
+
+        # --- Montage + fstab ---
+        - name: Monter et ajouter à fstab
+          mount:
+            path: "{{ mount_point }}"
+            src: "{{ part_path }}"
+            fstype: "{{ fs_type }}"
+            opts: "{{ mount_options }}"
+            state: mounted
+          tags: [mount]
+
+      when: state == 'present'
+
+    - block:
+        # --- Démontage & suppression fstab ---
+        - name: Démonter (si monté) et retirer du fstab
+          mount:
+            path: "{{ mount_point }}"
+            state: absent
+          ignore_errors: true
+          tags: [unmount]
+
+        # --- Optionnel: supprimer la partition ---
+        - name: Supprimer la partition {{ part_number }}
+          parted:
+            device: "{{ device }}"
+            number: "{{ part_number }}"
+            state: absent
+          tags: [partition]
+
+        # (Optionnel) Ne pas supprimer le répertoire pour éviter d'impacter d'autres services.
+        # - name: Supprimer le répertoire de montage
+        #   file:
+        #     path: "{{ mount_point }}"
+        #     state: absent
+
+      when: state == 'absent'
+
