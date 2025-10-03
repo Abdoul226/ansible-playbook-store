@@ -127,19 +127,46 @@ ansible-playbook -i inventory/hosts.ini playbooks/system/configure-ssh.yml \
 
 ---
 
-## 4. set-timezone.yml (à venir)
+## 4. Configurer timezone & locale (`set-timezone.yml`)
 
-But : Configurer le fuseau horaire du serveur.
+**Objectif :**  
+Définir un **fuseau horaire cohérent** sur l’ensemble des serveurs pour garantir la bonne cohérence des logs, des backups et des tâches automatisées.
 
-Exemple :
+### Variables
+```perl
+| Variable   | Défaut          | Description |
+|------------|-----------------|-------------|
+| `timezone` | `Europe/Paris`  | Fuseau horaire à appliquer. Ex : `UTC`, `Africa/Ouagadougou`, `America/New_York` |
+```
+### Exemples d’exécution
 
-- name: Définir le fuseau horaire
-  hosts: all
-  become: yes
-  tasks:
-    - name: Configurer timezone
-      timezone:
-        name: "Europe/Paris"
+- Appliquer le fuseau horaire **Europe/Paris** (par défaut) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/set-timezone.yml```
+- Appliquer le fuseau horaire **UTC** :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/set-timezone.yml -e "timezone=UTC"
+```
+- Appliquer le fuseau horaire **Africa/Ouagadougou** :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/system/set-timezone.yml -e "timezone=Africa/Ouagadougou"
+```
+**Vérification**
+
+Après exécution, le playbook affiche la sortie de timedatectl.
+Exemple attendu :
+```yaml
+Local time: sam. 2025-10-04 09:15:42 CEST
+Universal time: sam. 2025-10-04 07:15:42 UTC
+Time zone: Europe/Paris (CEST, +0200)
+```
+Bonnes pratiques
+
+- Utiliser **UTC** dans les environnements distribués (multi-serveurs, cloud).
+- Utiliser un timezone local (ex: `Europe/Paris`, `Africa/Ouagadougou`) pour les environnements orientés utilisateurs.
+
+- Toujours vérifier avec `timedatectl` ou `date` après application.
+
 ---
 
 ## 5. install-tools.yml (à venir)
