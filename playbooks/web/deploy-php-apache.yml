@@ -1,0 +1,224 @@
+---
+# playbooks/web/deploy-php-apache.yml
+- name: Déployer une application PHP avec Apache
+  hosts: webservers
+  become: yes
+
+  vars:
+    # --- Vhost / App ---
+    server_name: "_"               # ex: app.example.com ou "_"
+    http_port: 80
+    web_root: "/var/www/app-php"   # racine de l'app
+    enable_htaccess: true          # AllowOverride All si true
+    manage_firewall: true
+
+    # --- Déploiement applicatif ---
+    repo_url: ""                   # ex: https://github.com/user/mon-app-php.git (laisser vide pour app de démo)
+    repo_version: "main"
+    app_owner: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
+    app_group: "{{ app_owner }}"
+    app_mode: "0755"
+
+    # --- Paquets / noms variables selon OS ---
+    apache_pkg: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
+    apache_svc: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
+    apache_ctl: "{{ 'apache2ctl' if ansible_os_family == 'Debian' else 'apachectl' }}"
+    php_pkgs_debian:
+      - php
+      - libapache2-mod-php
+      - php-cli
+      - php-mbstring
+      - php-xml
+      - php-curl
+      - php-mysql
+      - unzip
+      - git
+    php_pkgs_rhel:
+      - php
+      - php-cli
+      - php-common
+      - php-mbstring
+      - php-xml
+      - php-curl
+      - php-mysqlnd
+      - unzip
+      - git
+
+    # --- Fichiers conf selon OS ---
+    vhost_path: >
+      {{ '/etc/apache2/sites-available/app-php.conf' if ansible_os_family == 'Debian'
+         else '/etc/httpd/conf.d/app-php.conf' }}
+
+  pre_tasks:
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: [apache, packages]
+
+    # (Facultatif) Sur RHEL-like, s'assurer que stream PHP est activé (selon distro)
+    # - name: (RHEL-like) activer module PHP (selon version/distro)
+    #   command: dnf module enable php:remi-8.2 -y
+    #   when: ansible_os_family == "RedHat"
+
+  tasks:
+    ######################################################################
+    # Installation Apache + PHP
+    ######################################################################
+    - name: Installer Apache
+      package:
+        name: "{{ apache_pkg }}"
+        state: present
+      tags: [apache, packages]
+
+    - name: Installer PHP + extensions (Debian/Ubuntu)
+      apt:
+        name: "{{ php_pkgs_debian }}"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [php, packages]
+
+    - name: Installer PHP + extensions (RHEL-like)
+      package:
+        name: "{{ php_pkgs_rhel }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [php, packages]
+
+    - name: (Debian) Activer modules utiles (rewrite)
+      command: a2enmod rewrite
+      when: ansible_os_family == "Debian"
+      register: a2enmod_out
+      changed_when: "'already enabled' not in a2enmod_out.stdout"
+      tags: [apache, modules]
+
+    ######################################################################
+    # Vhost
+    ######################################################################
+    - name: Créer le dossier web root
+      file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: "{{ app_mode }}"
+      tags: [webroot]
+
+    - name: Déployer VirtualHost
+      copy:
+        dest: "{{ vhost_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Géré par Ansible
+          <VirtualHost *:{{ http_port }}>
+              ServerName {{ server_name }}
+              DocumentRoot {{ web_root }}
+              <Directory "{{ web_root }}">
+                  Options Indexes FollowSymLinks
+                  AllowOverride {{ 'All' if enable_htaccess else 'None' }}
+                  Require all granted
+              </Directory>
+              ErrorLog  {{ (ansible_os_family == 'Debian') | ternary('/var/log/apache2/app-php-error.log', '/var/log/httpd/app-php_error.log') }}
+              CustomLog {{ (ansible_os_family == 'Debian') | ternary('/var/log/apache2/app-php-access.log', '/var/log/httpd/app-php_access.log') }} combined
+          </VirtualHost>
+      notify: Reload apache
+      tags: [apache, config]
+
+    - name: (Debian) Activer le site app-php
+      file:
+        src: "{{ vhost_path }}"
+        dest: "/etc/apache2/sites-enabled/app-php.conf"
+        state: link
+        force: true
+      when: ansible_os_family == "Debian"
+      notify: Reload apache
+      tags: [apache, config]
+
+    - name: (Debian) Désactiver 000-default si présent
+      file:
+        path: /etc/apache2/sites-enabled/000-default.conf
+        state: absent
+      when: ansible_os_family == "Debian"
+      notify: Reload apache
+      tags: [apache, config]
+
+    ######################################################################
+    # Déploiement applicatif
+    ######################################################################
+    - name: Déployer l'application depuis Git (si repo_url défini)
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ web_root }}"
+        version: "{{ repo_version }}"
+        force: yes
+      when: repo_url | length > 0
+      register: app_git
+      tags: [deploy]
+
+    - name: Déployer une app de démonstration (index.php + .htaccess) si pas de repo
+      copy:
+        dest: "{{ web_root }}/{{ item.path }}"
+        content: "{{ item.content }}"
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        mode: '0644'
+      loop:
+        - { path: "index.php", content: "<?php phpinfo(); ?>" }
+        - { path: ".htaccess", content: "{{ '# Demo rewrite rules' if enable_htaccess else '' }}" }
+      when: repo_url | length == 0
+      tags: [deploy]
+
+    - name: Mettre les bons droits sur l’app
+      file:
+        path: "{{ web_root }}"
+        owner: "{{ app_owner }}"
+        group: "{{ app_group }}"
+        recurse: true
+      tags: [deploy]
+
+    ######################################################################
+    # Firewall (optionnel)
+    ######################################################################
+    - name: Ouvrir le port HTTP via UFW (Debian/Ubuntu)
+      command: ufw allow {{ http_port }}/tcp
+      register: ufw_result
+      failed_when: false
+      changed_when: "'Skipping adding' not in ufw_result.stdout"
+      when: ansible_os_family == "Debian" and manage_firewall
+      tags: [firewall]
+
+    - name: Ouvrir le port HTTP via firewalld (RHEL-like)
+      firewalld:
+        port: "{{ http_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      failed_when: false
+      when: ansible_os_family == "RedHat" and manage_firewall
+      tags: [firewall]
+
+    ######################################################################
+    # Validation + Service
+    ######################################################################
+    - name: Valider la configuration (apachectl -t)
+      command: "{{ apache_ctl }} -t"
+      register: apache_test
+      changed_when: false
+      failed_when: apache_test.rc != 0
+      tags: [validate]
+
+    - name: Démarrer et activer Apache
+      service:
+        name: "{{ apache_svc }}"
+        state: started
+        enabled: yes
+      tags: [service]
+
+  handlers:
+    - name: Reload apache
+      service:
+        name: "{{ apache_svc }}"
+        state: reloaded
+

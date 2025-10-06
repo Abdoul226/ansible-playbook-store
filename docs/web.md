@@ -108,4 +108,56 @@ Vérification
 
 ---
 
+## 3. Déployer une app PHP avec Apache (`deploy-php-apache.yml`)
 
+**Objectif :**  
+Installer Apache + PHP, créer un **VirtualHost**, déployer l’app soit depuis un **dépôt Git**, soit via une **app de démonstration**, ouvrir le firewall si besoin, et **valider la conf**.
+
+### Variables
+```perl
+| Variable            | Défaut               | Description |
+|---------------------|----------------------|-------------|
+| `server_name`       | `_`                  | Nom du serveur (FQDN conseillé en prod) |
+| `http_port`         | `80`                 | Port d’écoute |
+| `web_root`          | `/var/www/app-php`   | Racine de l’app |
+| `enable_htaccess`   | `true`               | `AllowOverride All` si `true` |
+| `manage_firewall`   | `true`               | Ouvrir le port via UFW/firewalld |
+| `repo_url`          | `""`                 | URL Git de l’app (laisser vide pour démo) |
+| `repo_version`      | `main`               | Branche/tag à déployer |
+| `app_owner`/`group` | auto (www-data/apache) | Propriétaire/groupe du répertoire |
+| `app_mode`          | `0755`               | Permissions du répertoire |
+```
+> Paquets PHP communs installés : `mbstring`, `xml`, `curl`, `mysql`.  
+> Sur Debian, `libapache2-mod-php` est activé (mod_php).
+
+### Exemples d’exécution
+
+- Déployer **une app de démo** (phpinfo) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-php-apache.yml
+```
+- Déployer depuis un repo Git :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-php-apache.yml \
+  -e "repo_url=https://github.com/tonuser/ton-app-php.git repo_version=main server_name=app.local web_root=/var/www/app"
+```
+- Changer le port + désactiver .htaccess :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-php-apache.yml \
+  -e "http_port=8080 enable_htaccess=false"
+```
+
+**Vérification**
+- `curl -I http://<ip>:<port>` → `200 OK`.
+- Naviguer sur `http://<ip>:<port>` :
+	- Démo → page phpinfo()
+	- Git → ta vraie application
+
+**Bonnes pratiques**
+- En prod, préférer **FQDN + HTTPS** (voir playbook Let’s Encrypt).
+- Isoler chaque **app** dans son vhost et son répertoire.
+- Si ton app nécessite des permissions d’écriture (uploads, cache), appliquer des droits fins sur ces sous-dossiers uniquement.
+
+---
+
+## 4. 
