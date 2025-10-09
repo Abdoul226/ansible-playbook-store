@@ -1,0 +1,304 @@
+---
+# playbooks/web/lets-encrypt.yml
+- name: Activer HTTPS avec Let's Encrypt (Certbot, webroot)
+  hosts: webservers
+  become: yes
+
+  vars:
+    server: "nginx"           # "nginx" ou "apache"
+    domains:                  # Premier = CN, suivants = SAN
+      - "example.com"
+      - "www.example.com"
+    email: "admin@example.com"
+    agree_tos: true
+    redirect_http_to_https: true
+    webroot: "/var/www/letsencrypt"     # emplacement challenge ACME
+    ssl_conf_name: "00-ssl-app.conf"    # nom du fichier conf SSL
+    http_port: 80
+    https_port: 443
+    manage_firewall: true
+    # (optionnel) Générer des DH params (un peu long la 1ère fois)
+    generate_dhparam: false
+    dhparam_path: "/etc/ssl/certs/dhparam.pem"
+
+    # chemins conf selon serveur
+    nginx_conf_d: "/etc/nginx/conf.d"
+    apache_sites_avail: "/etc/apache2/sites-available"
+    apache_sites_enabled: "/etc/apache2/sites-enabled"
+    apache_ssl_conf_path: "/etc/httpd/conf.d"
+
+  pre_tasks:
+    - name: apt update (Debian/Ubuntu)
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+  tasks:
+    ####################################################################
+    # Paquets Certbot + serveurs web
+    ####################################################################
+    - name: Installer paquets Certbot + plugins (Debian/Ubuntu)
+      apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+          - python3-certbot-apache
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [certbot, packages]
+
+    - name: Installer paquets Certbot + plugins (RHEL-like)
+      package:
+        name:
+          - certbot
+          - python3-certbot-nginx
+          - python3-certbot-apache
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [certbot, packages]
+
+    - name: S'assurer que le webroot ACME existe
+      file:
+        path: "{{ webroot }}"
+        state: directory
+        owner: "{{ 'www-data' if server == 'nginx' and ansible_os_family == 'Debian' else (server == 'nginx') | ternary('nginx','apache') }}"
+        group: "{{ 'www-data' if server == 'nginx' and ansible_os_family == 'Debian' else (server == 'nginx') | ternary('nginx','apache') }}"
+        mode: '0755'
+
+    ####################################################################
+    # HTTP vhost minimal pour challenge + redirection éventuelle
+    ####################################################################
+    - name: Nginx - vhost HTTP (challenge + redirection)
+      copy:
+        dest: "{{ nginx_conf_d }}/00-http-{{ (domains|first) }}.conf"
+        mode: '0644'
+        content: |
+          # Géré par Ansible - HTTP challenge + redirect
+          server {
+              listen {{ http_port }};
+              listen [::]:{{ http_port }};
+              server_name {{ domains | join(' ') }};
+              # Emplacement challenge ACME
+              location ^~ /.well-known/acme-challenge/ {
+                  root {{ webroot }};
+              }
+              {% if redirect_http_to_https %}
+              location / {
+                  return 301 https://$host$request_uri;
+              }
+              {% else %}
+              location / { return 200 "OK"; add_header Content-Type text/plain; }
+              {% endif %}
+          }
+      when: server == "nginx"
+      notify: Reload nginx
+      tags: [config]
+
+    - name: Apache - vhost HTTP (challenge + redirection)
+      blockinfile:
+        path: "{{ (ansible_os_family == 'Debian') | ternary(apache_sites_avail + '/00-http-' + (domains|first) + '.conf', apache_ssl_conf_path + '/00-http-' + (domains|first) + '.conf') }}"
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+        block: |
+          # Géré par Ansible - HTTP challenge + redirect
+          <VirtualHost *:{{ http_port }}>
+              ServerName {{ domains[0] }}
+              {% for d in domains[1:] %}
+              ServerAlias {{ d }}
+              {% endfor %}
+              DocumentRoot {{ webroot }}
+              <Directory "{{ webroot }}">
+                  Options FollowSymLinks
+                  AllowOverride None
+                  Require all granted
+              </Directory>
+              Alias /.well-known/acme-challenge {{ webroot }}/.well-known/acme-challenge
+              {% if redirect_http_to_https %}
+              RewriteEngine On
+              RewriteCond %{HTTPS} off
+              RewriteRule ^/(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+              {% endif %}
+              ErrorLog {{ (ansible_os_family == 'Debian') | ternary('/var/log/apache2/letsencrypt-error.log','/var/log/httpd/letsencrypt_error.log') }}
+              CustomLog {{ (ansible_os_family == 'Debian') | ternary('/var/log/apache2/letsencrypt-access.log','/var/log/httpd/letsencrypt_access.log') }} combined
+          </VirtualHost>
+      when: server == "apache"
+      notify: Reload apache
+      tags: [config]
+
+    - name: Activer site Apache (Debian)
+      file:
+        src: "{{ apache_sites_avail }}/00-http-{{ (domains|first) }}.conf"
+        dest: "{{ apache_sites_enabled }}/00-http-{{ (domains|first) }}.conf"
+        state: link
+        force: true
+      when: server == "apache" and ansible_os_family == "Debian"
+      notify: Reload apache
+
+    ####################################################################
+    # Obtenir / renouveler certificat via webroot
+    ####################################################################
+    - name: Obtenir/renouveler le certificat (webroot)
+      command: >
+        certbot certonly --webroot
+        -w {{ webroot }}
+        {{ domains | map('regex_replace','^(.*)$','-d \\1') | join(' ') }}
+        --email {{ email }}
+        {{ agree_tos | ternary('--agree-tos','') }}
+        --non-interactive
+        --keep-until-expiring
+        --expand
+      register: certbot_result
+      changed_when: "'Congratulations!' in certbot_result.stdout"
+      tags: [certbot, obtain]
+
+    - name: Afficher la sortie certbot
+      debug:
+        var: certbot_result.stdout_lines
+
+    - name: (Optionnel) Générer dhparam 2048
+      command: openssl dhparam -out {{ dhparam_path }} 2048
+      args:
+        creates: "{{ dhparam_path }}"
+      when: generate_dhparam
+      tags: [tls]
+
+    ####################################################################
+    # Vhost HTTPS
+    ####################################################################
+    - name: Nginx - vhost HTTPS
+      copy:
+        dest: "{{ nginx_conf_d }}/{{ ssl_conf_name }}"
+        mode: '0644'
+        content: |
+          # Géré par Ansible - HTTPS
+          server {
+              listen {{ https_port }} ssl http2;
+              listen [::]:{{ https_port }} ssl http2;
+              server_name {{ domains | join(' ') }};
+
+              ssl_certificate     /etc/letsencrypt/live/{{ domains[0] }}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/{{ domains[0] }}/privkey.pem;
+              ssl_session_timeout 1d;
+              ssl_session_cache shared:SSL:10m;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_prefer_server_ciphers on;
+              {% if generate_dhparam %}ssl_dhparam {{ dhparam_path }};{% endif %}
+
+              # Emplacement challenge (doit rester accessible en HTTPS aussi)
+              location ^~ /.well-known/acme-challenge/ {
+                  root {{ webroot }};
+              }
+
+              # Proxy par défaut: tu peux modifier root/proxy_pass selon ton app
+              root /var/www/html;
+              index index.html;
+              location / { try_files $uri $uri/ =404; }
+          }
+      when: server == "nginx"
+      notify: Reload nginx
+      tags: [config, https]
+
+    - name: Apache - vhost HTTPS
+      blockinfile:
+        path: "{{ (ansible_os_family == 'Debian') | ternary(apache_sites_avail + '/00-ssl-' + (domains|first) + '.conf', apache_ssl_conf_path + '/00-ssl-' + (domains|first) + '.conf') }}"
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+        block: |
+          # Géré par Ansible - HTTPS
+          <VirtualHost *:{{ https_port }}>
+              ServerName {{ domains[0] }}
+              {% for d in domains[1:] %}
+              ServerAlias {{ d }}
+              {% endfor %}
+              DocumentRoot /var/www/html
+
+              SSLEngine on
+              SSLCertificateFile /etc/letsencrypt/live/{{ domains[0] }}/fullchain.pem
+              SSLCertificateKeyFile /etc/letsencrypt/live/{{ domains[0] }}/privkey.pem
+              {% if generate_dhparam %}SSLOpenSSLConfCmd DHParameters "{{ dhparam_path }}"{% endif %}
+
+              <Directory "/var/www/html">
+                  Options Indexes FollowSymLinks
+                  AllowOverride None
+                  Require all granted
+              </Directory>
+              ErrorLog  {{ (ansible_os_family == 'Debian') | ternary('/var/log/apache2/ssl-error.log','/var/log/httpd/ssl_error.log') }}
+              CustomLog {{ (ansible_os_family == 'Debian') | ternary('/var/log/apache2/ssl-access.log','/var/log/httpd/ssl_access.log') }} combined
+          </VirtualHost>
+      when: server == "apache"
+      notify: Reload apache
+      tags: [config, https]
+
+    - name: Activer site SSL Apache (Debian)
+      file:
+        src: "{{ apache_sites_avail }}/00-ssl-{{ (domains|first) }}.conf"
+        dest: "{{ apache_sites_enabled }}/00-ssl-{{ (domains|first) }}.conf"
+        state: link
+        force: true
+      when: server == "apache" and ansible_os_family == "Debian"
+      notify: Reload apache
+
+    ####################################################################
+    # Validation + Services + Firewall
+    ####################################################################
+    - name: Valider la configuration Nginx
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+      when: server == "nginx"
+      tags: [validate]
+
+    - name: Valider la configuration Apache
+      command: "{{ (ansible_os_family == 'Debian') | ternary('apache2ctl','apachectl') }} -t"
+      register: apache_test
+      changed_when: false
+      failed_when: apache_test.rc != 0
+      when: server == "apache"
+      tags: [validate]
+
+    - name: Activer + démarrer Nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      when: server == "nginx"
+
+    - name: Activer + démarrer Apache
+      service:
+        name: "{{ (ansible_os_family == 'Debian') | ternary('apache2','httpd') }}"
+        state: started
+        enabled: yes
+      when: server == "apache"
+
+    - name: Ouvrir 443 via UFW
+      command: ufw allow {{ https_port }}/tcp
+      register: ufw_res_https
+      failed_when: false
+      changed_when: "'Skipping adding' not in ufw_res_https.stdout"
+      when: ansible_os_family == "Debian" and manage_firewall
+
+    - name: Ouvrir 443 via firewalld
+      firewalld:
+        port: "{{ https_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      failed_when: false
+      when: ansible_os_family == "RedHat" and manage_firewall
+
+  handlers:
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Reload apache
+      service:
+        name: "{{ (ansible_os_family == 'Debian') | ternary('apache2','httpd') }}"
+        state: reloaded
+

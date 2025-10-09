@@ -211,4 +211,57 @@ ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-flask-nginx-gunicor
 
 ---
 
-## 5. 
+## 5. Configurer HTTPS avec Let’s Encrypt (`lets-encrypt.yml`)
+
+**Objectif :**  
+Obtenir/renouveler automatiquement un **certificat TLS** via **Let’s Encrypt** (plugin **webroot**) et activer un **vhost HTTPS** sous **Nginx** ou **Apache**.  
+Le challenge est servi depuis `{{ webroot }}` (route `/.well-known/acme-challenge/`).
+
+### Variables principales
+```perl
+| Variable | Défaut | Description |
+|---|---|---|
+| `server` | `nginx` | Choix du serveur (`nginx` ou `apache`) |
+| `domains` | `['example.com','www.example.com']` | Domaines à certifier (CN = 1er) |
+| `email` | `admin@example.com` | Contact Let’s Encrypt |
+| `agree_tos` | `true` | Acceptation des CGU LE |
+| `redirect_http_to_https` | `true` | Redirection 80 → 443 |
+| `webroot` | `/var/www/letsencrypt` | Dossier pour le challenge ACME |
+| `ssl_conf_name` | `00-ssl-app.conf` | Nom du fichier de conf SSL |
+| `manage_firewall` | `true` | Ouvre le port 443 |
+```
+> Les certificats sont stockés dans `/etc/letsencrypt/live/<domain>/`.  
+> **Renouvellement auto** : Certbot installe un **systemd timer**/cron par défaut (`certbot.timer`).
+
+### Exemples
+
+- HTTPS sur Nginx pour `example.com` :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/lets-encrypt.yml \
+  -e "server=nginx domains=['example.com','www.example.com'] email=admin@example.com"
+``` 
+- HTTPS sur Apache + pas de redirection :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/lets-encrypt.yml \
+  -e "server=apache redirect_http_to_https=false domains=['site.tld'] email=me@site.tld"
+```
+- Générer des dhparam :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/lets-encrypt.yml \
+  -e "generate_dhparam=true"
+``` 
+
+**Vérification**
+- `sudo certbot certificates` → liste des certs.
+- `curl -I https://example.com` → `200` et certificat valide.
+- Naviguer : cadenas **HTTPS** dans le navigateur.
+
+**Bonnes pratiques**
+- Avoir un **DNS A/AAAA** correct vers le serveur avant l’exécution.
+- Laisser le vhost **HTTP** accessible au moins pour le challenge.
+- En prod, forcer `TLSv1.2+`, envisager `HSTS` et **ciphers** durcis.
+- Sur Nginx, proxifier vers ton app (ex: Flask/Gunicorn) en adaptant le `root/location`.
+
+---
+
+## 6.
