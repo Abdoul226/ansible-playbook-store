@@ -1,0 +1,144 @@
+---
+# playbooks/web/nginx-reverse-proxy.yml
+- name: Configurer Nginx en reverse proxy vers une application
+  hosts: webservers
+  become: yes
+
+  vars:
+    # ---- Vhost / Nginx ----
+    server_name: "_"          # ex: app.example.com
+    listen_port: 80
+    manage_firewall: true
+    conf_name: "revproxy-{{ (server_name | regex_replace('[^a-zA-Z0-9.-]','_')) }}.conf"
+    nginx_conf_d: "/etc/nginx/conf.d"
+    gzip_enabled: true
+    client_max_body_size: "50m"
+
+    # ---- Upstream cible ----
+    upstream_scheme: "http"   # http | https
+    upstream_host: "127.0.0.1"
+    upstream_port: 8000
+    upstream_path: "/"        # ex: / , /api , /app/
+
+    # ---- WebSocket / en-têtes / timeouts ----
+    enable_websocket: true
+    proxy_read_timeout: "60s"
+    proxy_connect_timeout: "5s"
+    proxy_send_timeout: "60s"
+
+    # ---- Emplacements additionnels (optionnel) ----
+    # Exemple:
+    # extra_locations:
+    #   - path: /static/
+    #     root: /opt/app/static
+    #     try_files: "$uri =404"
+    extra_locations: []
+
+  pre_tasks:
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: [nginx, packages]
+
+  tasks:
+    - name: Installer Nginx si absent
+      package:
+        name: nginx
+        state: present
+      tags: [nginx, packages]
+
+    - name: Créer le vhost reverse proxy
+      copy:
+        dest: "{{ nginx_conf_d }}/{{ conf_name }}"
+        mode: '0644'
+        content: |
+          # Géré par Ansible — Reverse Proxy
+          map $http_upgrade $connection_upgrade {
+              default upgrade;
+              ''      close;
+          }
+          server {
+              listen {{ listen_port }};
+              listen [::]:{{ listen_port }};
+              server_name {{ server_name }};
+
+              {% if gzip_enabled %}
+              gzip on;
+              gzip_types text/plain text/css application/json application/javascript application/xml+rss application/xml text/javascript image/svg+xml;
+              gzip_min_length 1024;
+              {% endif %}
+              client_max_body_size {{ client_max_body_size }};
+
+              # Emplacements statiques optionnels
+              {% for loc in extra_locations %}
+              location {{ loc.path }} {
+                  {% if loc.root is defined %}root {{ loc.root }};{% endif %}
+                  {% if loc.alias is defined %}alias {{ loc.alias }};{% endif %}
+                  {% if loc.try_files is defined %}try_files {{ loc.try_files }};{% endif %}
+                  {% if loc.extras is defined %}{{ loc.extras }}{% endif %}
+              }
+              {% endfor %}
+
+              # Emplacement principal → proxy vers l'application
+              location / {
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+
+                  {% if enable_websocket %}
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection $connection_upgrade;
+                  {% endif %}
+
+                  proxy_connect_timeout {{ proxy_connect_timeout }};
+                  proxy_send_timeout {{ proxy_send_timeout }};
+                  proxy_read_timeout {{ proxy_read_timeout }};
+
+                  # Cible
+                  proxy_pass {{ upstream_scheme }}://{{ upstream_host }}:{{ upstream_port }}{{ upstream_path }};
+              }
+          }
+      notify: Reload nginx
+      tags: [nginx, config]
+
+    - name: Valider la configuration (nginx -t)
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+      tags: [nginx, validate]
+
+    - name: Activer et démarrer Nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      tags: [nginx, service]
+
+    - name: Ouvrir le port via UFW (Debian/Ubuntu)
+      command: ufw allow {{ listen_port }}/tcp
+      register: ufw_result
+      failed_when: false
+      changed_when: "'Skipping adding' not in ufw_result.stdout"
+      when: ansible_os_family == "Debian" and manage_firewall
+      tags: [firewall]
+
+    - name: Ouvrir le port via firewalld (RHEL-like)
+      firewalld:
+        port: "{{ listen_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      failed_when: false
+      when: ansible_os_family == "RedHat" and manage_firewall
+      tags: [firewall]
+
+  handlers:
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+

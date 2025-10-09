@@ -211,7 +211,7 @@ ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-flask-nginx-gunicor
 
 ---
 
-## 5. Configurer HTTPS avec Let’s Encrypt (`lets-encrypt.yml`)
+## 5. Configurer HTTPS avec Let’s Encrypt (`lets-encrypt.yml`) >> **A vérifier**
 
 **Objectif :**  
 Obtenir/renouveler automatiquement un **certificat TLS** via **Let’s Encrypt** (plugin **webroot**) et activer un **vhost HTTPS** sous **Nginx** ou **Apache**.  
@@ -264,4 +264,57 @@ ansible-playbook -i inventory/hosts.ini playbooks/web/lets-encrypt.yml \
 
 ---
 
-## 6.
+## 6. Configurer un Reverse Proxy Nginx (`nginx-reverse-proxy.yml`) >> ** A vérifier et tester**
+
+**Objectif :**  
+Faire de **Nginx** un **reverse proxy** vers une application amont (Flask, NodeJS, Go, PHP-FPM derrière Apache, etc.), avec support **WebSocket**, **gzip**, **timeouts**, taille d’upload et **ouverture du firewall**.
+
+### Variables
+```perl
+| Variable | Défaut | Description |
+|---|---|---|
+| `server_name` | `_` | FQDN (ex: `app.example.com`) |
+| `listen_port` | `80` | Port d’écoute du vhost |
+| `manage_firewall` | `true` | Ouvre le port via UFW/firewalld |
+| `gzip_enabled` | `true` | Active la compression gzip |
+| `client_max_body_size` | `50m` | Limite d’upload côté Nginx |
+| `upstream_scheme` | `http` | `http` ou `https` |
+| `upstream_host` | `127.0.0.1` | Hôte de l’app |
+| `upstream_port` | `8000` | Port de l’app |
+| `upstream_path` | `/` | Chemin amont (ex: `/api/`) |
+| `enable_websocket` | `true` | Upgrade des connexions pour WS |
+| `proxy_*_timeout` | `60s` / `5s` | Timeouts proxy |
+| `extra_locations` | `[]` | Emplacements supplémentaires (ex: `/static/`) |
+```
+**Exemple `extra_locations` :**
+```yaml
+extra_locations:
+  - path: /static/
+    root: /opt/app/static
+    try_files: "$uri =404"
+```
+**Exemples d’exécution**
+- Reverse proxy par défaut (→ `127.0.0.1:8000/`) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/nginx-reverse-proxy.yml
+```
+- Vers un backend sur `10.0.0.5:5000` + domaine :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/nginx-reverse-proxy.yml \
+  -e "server_name=app.example.com upstream_host=10.0.0.5 upstream_port=5000"
+```
+- Chemin d’API dédié + taille d’upload à 10 Mo :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/nginx-reverse-proxy.yml \
+  -e "upstream_path=/api/ client_max_body_size=10m"
+```
+
+**Bonnes pratiques**
+Combine avec `lets-encrypt.yml` pour activer le **HTTPS** : garder le reverse proxy tel quel, et faire écouter le vhost TLS sur `443` par le playbook Let’s Encrypt.
+- Pour des **uploads volumineux**, ajuste `client_max_body_size` et les timeouts.
+- Si l’amont est en **HTTPS**, mets `upstream_scheme: https` (et gère la validation TLS si nécessaire, via `proxy_ssl_*` directives dans une variante avancée).
+
+---
+
+## 7.
+
