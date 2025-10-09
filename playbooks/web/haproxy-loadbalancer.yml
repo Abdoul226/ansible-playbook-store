@@ -1,0 +1,218 @@
+---
+# playbooks/web/haproxy-loadbalancer.yml
+- name: Installer et configurer HAProxy (HTTP/TCP load balancer)
+  hosts: lbservers
+  become: yes
+
+  vars:
+    # ---------- Frontends ----------
+    http_enabled: true
+    http_bind_port: 80
+
+    tcp_enabled: false              # pour du passthrough TLS ou autre protocole
+    tcp_bind_port: 443
+    tcp_mode: "tcp"                 # "tcp" (passthrough), sinon "http"
+
+    # ---------- HTTPS termination (optionnel) ----------
+    ssl_termination: false
+    https_bind_port: 443
+    # Chemin d'un bundle PEM (cert+key concaténés) si ssl_termination=true
+    ssl_pem_path: "/etc/ssl/private/haproxy.pem"
+
+    # ---------- Backend commun ----------
+    backend_mode: "http"            # "http" ou "tcp"
+    balance_algo: "roundrobin"      # ex: roundrobin | leastconn | source
+    connect_timeout: "5s"
+    client_timeout: "50s"
+    server_timeout: "50s"
+
+    # Sticky sessions (HTTP)
+    sticky_cookie_enabled: false
+    sticky_cookie_name: "SRV"
+
+    # ---------- Backends ----------
+    # Liste de serveurs pour le backend "app_http"
+    backends_http:
+      - { name: "app1", host: "10.0.0.11", port: 8080, weight: 100, check: true }
+      - { name: "app2", host: "10.0.0.12", port: 8080, weight: 100, check: true }
+
+    # Liste de serveurs pour le backend "app_tcp" (si tcp_enabled)
+    backends_tcp:
+      - { name: "app1", host: "10.0.0.21", port: 443, weight: 100, check: true }
+      - { name: "app2", host: "10.0.0.22", port: 443, weight: 100, check: true }
+
+    # ---------- Stats (optionnel) ----------
+    stats_enabled: true
+    stats_uri: "/haproxy?stats"
+    stats_bind_port: 8404
+    stats_user: "admin"
+    stats_pass: "admin123"          # ➜ à vault-iser en prod
+
+    # Firewall
+    manage_firewall: true
+
+    haproxy_cfg_path: "/etc/haproxy/haproxy.cfg"
+
+  pre_tasks:
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+  tasks:
+    - name: Installer HAProxy
+      package:
+        name: haproxy
+        state: present
+      tags: [haproxy, packages]
+
+    - name: Créer répertoire SSL privé (si termination)
+      file:
+        path: "/etc/ssl/private"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      when: ssl_termination
+
+    # Si tu dois déposer un PEM : utilise copy/template/vault à part.
+    # - name: Déposer le certificat PEM
+    #   copy:
+    #     src: files/haproxy.pem
+    #     dest: "{{ ssl_pem_path }}"
+    #     owner: root
+    #     group: root
+    #     mode: '0600'
+    #   when: ssl_termination
+
+    - name: Générer la configuration HAProxy
+      copy:
+        dest: "{{ haproxy_cfg_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          global
+              log /dev/log local0
+              log /dev/log local1 notice
+              daemon
+              maxconn 4096
+              tune.ssl.default-dh-param 2048
+
+          defaults
+              log     global
+              mode    {{ backend_mode }}
+              option  httplog
+              option  dontlognull
+              timeout connect {{ connect_timeout }}
+              timeout client  {{ client_timeout }}
+              timeout server  {{ server_timeout }}
+
+          {% if http_enabled %}
+          frontend fe_http
+              bind *:{{ http_bind_port }}
+              mode http
+              option forwardfor
+              default_backend be_http
+          {% endif %}
+
+          {% if ssl_termination %}
+          frontend fe_https_terminated
+              bind *:{{ https_bind_port }} ssl crt {{ ssl_pem_path }}
+              mode http
+              option forwardfor
+              default_backend be_http
+          {% endif %}
+
+          {% if tcp_enabled %}
+          frontend fe_tcp
+              bind *:{{ tcp_bind_port }}
+              mode {{ tcp_mode }}
+              default_backend be_tcp
+          {% endif %}
+
+          {% if stats_enabled %}
+          listen stats
+              bind *:{{ stats_bind_port }}
+              mode http
+              stats enable
+              stats uri {{ stats_uri }}
+              stats refresh 10s
+              stats auth {{ stats_user }}:{{ stats_pass }}
+          {% endif %}
+
+          {% if http_enabled or ssl_termination %}
+          backend be_http
+              mode http
+              balance {{ balance_algo }}
+              option httpchk GET /health || GET /
+              {% if sticky_cookie_enabled %}cookie {{ sticky_cookie_name }} insert indirect nocache{% endif %}
+              {% for s in backends_http %}
+              server {{ s.name }} {{ s.host }}:{{ s.port }} weight {{ s.weight|default(100) }} {% if s.check|default(true) %}check{% endif %} {% if sticky_cookie_enabled %}cookie {{ s.name }}{% endif %}
+              {% endfor %}
+          {% endif %}
+
+          {% if tcp_enabled %}
+          backend be_tcp
+              mode tcp
+              balance {{ balance_algo }}
+              option tcp-check
+              {% for s in backends_tcp %}
+              server {{ s.name }} {{ s.host }}:{{ s.port }} weight {{ s.weight|default(100) }} {% if s.check|default(true) %}check{% endif %}
+              {% endfor %}
+          {% endif %}
+      notify: Reload haproxy
+      tags: [haproxy, config]
+
+    - name: Valider la configuration (haproxy -c)
+      command: "haproxy -c -f {{ haproxy_cfg_path }}"
+      register: haproxy_check
+      changed_when: false
+      failed_when: haproxy_check.rc != 0
+      tags: [haproxy, validate]
+
+    - name: Activer + démarrer HAProxy
+      service:
+        name: haproxy
+        state: started
+        enabled: yes
+      tags: [haproxy, service]
+
+    - name: Ouvrir ports HTTP/HTTPS/Stats via UFW (Debian/Ubuntu)
+      command: ufw allow {{ item }}/tcp
+      loop: >-
+        {{
+          ([http_bind_port] if http_enabled else []) +
+          ([https_bind_port] if ssl_termination else []) +
+          ([tcp_bind_port] if tcp_enabled else []) +
+          ([stats_bind_port] if stats_enabled else [])
+        }}
+      register: ufw_res
+      failed_when: false
+      changed_when: "'Skipping adding' not in (ufw_res.results | map(attribute='stdout') | join(' '))"
+      when: ansible_os_family == "Debian" and manage_firewall
+      tags: [firewall]
+
+    - name: Ouvrir ports HTTP/HTTPS/Stats via firewalld (RHEL-like)
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop: >-
+        {{
+          ([http_bind_port] if http_enabled else []) +
+          ([https_bind_port] if ssl_termination else []) +
+          ([tcp_bind_port] if tcp_enabled else []) +
+          ([stats_bind_port] if stats_enabled else [])
+        }}
+      failed_when: false
+      when: ansible_os_family == "RedHat" and manage_firewall
+      tags: [firewall]
+
+  handlers:
+    - name: Reload haproxy
+      service:
+        name: haproxy
+        state: reloaded
+

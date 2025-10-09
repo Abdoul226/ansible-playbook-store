@@ -317,4 +317,64 @@ Combine avec `lets-encrypt.yml` pour activer le **HTTPS** : garder le reverse pr
 ---
 
 ## 7.
+### Load balancer HAProxy (`haproxy-loadbalancer.yml`)
 
+**Objectif :**  
+Fournir un **équilibreur de charge** HAProxy pour HTTP/TCP avec **health checks**, **algorithmes de répartition**, **sticky sessions** (optionnel), **page de stats** (optionnelle), et **termination TLS** (optionnelle).
+
+**Fichier :** `playbooks/web/haproxy-loadbalancer.yml`
+
+#### Variables clés
+```perl
+| Variable 		  | Défaut  | Description |
+|-------------------------|---------|-------------|
+| `http_enabled`	  | `true`  | Frontend HTTP sur `http_bind_port` |
+| `http_bind_port`	  | `80`    | Port frontend HTTP |
+| `ssl_termination`	  | `false` | Active un frontend HTTPS qui **termine TLS** (cert PEM requis) |
+| `https_bind_port` 	  | `443`   | Port HTTPS si termination |
+| `ssl_pem_path` 	  | `/etc/ssl/private/haproxy.pem` | Chemin du **bundle PEM** (cert+key) |
+| `tcp_enabled`		  | `false` | Frontend TCP (ex: **TLS passthrough**) |
+| `tcp_bind_port`	  | `443`   | Port frontend TCP |
+| `backend_mode`	  | `http`  | Mode par défaut des backends (`http`/`tcp`) |
+| `balance_algo`	  | `roundrobin` | Algorithme (ex: `leastconn`, `source`) |
+| `sticky_cookie_enabled` | `false` | Active cookie sticky côté backend HTTP |
+| `backends_http`	  | liste   | Serveurs HTTP (nom/host/port/weight/check) |
+| `backends_tcp`	  | liste   | Serveurs TCP |
+```
+> **Stats** : si `stats_enabled=true`, interface sur `http://<ip>:<stats_bind_port>{{stats_uri}}` (auth basique).  
+> Health-check HTTP par défaut : `GET /health` puis `/`.
+
+#### Exemples
+
+- **HTTP LB** classique (80 → 2 backends 8080) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/haproxy-loadbalancer.yml \
+  -e "backends_http=[{name:'app1',host:'10.0.0.11',port:8080},{name:'app2',host:'10.0.0.12',port:8080}]"
+```
+- Sticky sessions + leastconn :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/haproxy-loadbalancer.yml \
+  -e "sticky_cookie_enabled=true balance_algo=leastconn"
+```
+- TLS termination (cert PEM déjà en place) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/haproxy-loadbalancer.yml \
+  -e "ssl_termination=true ssl_pem_path=/etc/ssl/private/haproxy.pem"
+```
+- TLS passthrough (mode TCP) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/haproxy-loadbalancer.yml \
+  -e "tcp_enabled=true backend_mode=tcp backends_tcp=[{name:'s1',host:'10.0.0.21',port:443},{name:'s2',host:'10.0.0.22',port:443}]"
+```
+
+**Vérification**
+- `haproxy -c -f /etc/haproxy/haproxy.cfg` → OK
+- `systemctl status haproxy` → actif
+- `curl -I http://<ip>` → `200` (si backends HTTP OK)
+- Stats (si activées) : `http://<ip>:8404/haproxy?stats`
+
+**Bonnes pratiques**
+- En **prod**, **vault-iser** `stats_user/stats_pass` et les **certificats**.
+- Si termination TLS : générer un **PEM** `fullchain + privkey` concaténés.
+- Préférer `leastconn` pour des charges **non homogènes**, source pour **sticky** sans cookie (hash IP client).
+- Coupler avec un **monitoring** (Exporter Prometheus HAProxy) et des **alertes**.
