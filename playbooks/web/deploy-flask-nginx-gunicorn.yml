@@ -1,0 +1,241 @@
+---
+# playbooks/web/deploy-flask-nginx-gunicorn.yml
+- name: Déployer une app Flask avec Gunicorn + Nginx
+  hosts: webservers
+  become: yes
+
+  vars:
+    # ---- App / Repo ----
+    app_name: "flaskapp"
+    app_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
+    app_group: "{{ app_user }}"
+    app_dir: "/opt/{{ app_name }}"
+    repo_url: ""            # ex: https://github.com/you/your-flask-app.git (laisser vide = app de démo)
+    repo_version: "main"
+    wsgi_module: "app:app"  # module:objet WSGI (ex: myapp:app)
+
+    # ---- Python / venv ----
+    python_bin: "python3"
+    venv_path: "{{ app_dir }}/venv"
+    requirements_file: "requirements.txt"  # si présent dans votre repo
+
+    # ---- Gunicorn ----
+    gunicorn_bind: "unix:{{ app_dir }}/gunicorn.sock"  # unix socket (recommandé)
+    gunicorn_workers: 2
+    gunicorn_timeout: 60
+    service_name: "gunicorn-{{ app_name }}"
+
+    # ---- Nginx ----
+    server_name: "_"   # ex: app.example.com
+    http_port: 80
+    manage_firewall: true
+
+    # chemins selon OS
+    nginx_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
+    nginx_conf_dir: "{{ '/etc/nginx' }}"
+    nginx_site_path: "{{ nginx_conf_dir }}/conf.d/{{ app_name }}.conf"
+
+  pre_tasks:
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: [packages]
+
+  tasks:
+    ######################################################################
+    # Paquets OS (Python, venv, build, Nginx)
+    ######################################################################
+    - name: Installer paquets (Debian/Ubuntu)
+      apt:
+        name:
+          - nginx
+          - python3
+          - python3-venv
+          - python3-pip
+          - git
+          - build-essential
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [packages]
+
+    - name: Installer paquets (RHEL-like)
+      package:
+        name:
+          - nginx
+          - python3
+          - python3-pip
+          - git
+          - gcc
+          - make
+      state: present
+      when: ansible_os_family == "RedHat"
+      tags: [packages]
+
+    ######################################################################
+    # Utilisateur / Dossiers
+    ######################################################################
+    - name: Créer le dossier de l’app
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0755'
+
+    ######################################################################
+    # Code applicatif
+    ######################################################################
+    - name: Cloner depuis Git (si repo défini)
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_version }}"
+        force: yes
+      when: repo_url | length > 0
+      tags: [deploy]
+
+    - name: Déployer une app Flask de démo (si pas de repo)
+      copy:
+        dest: "{{ app_dir }}/{{ item.path }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: '0644'
+        content: "{{ item.content }}"
+      loop:
+        - { path: "app.py", content: "from flask import Flask\napp=Flask(__name__)\n@app.get('/')\ndef index():\n    return 'Hello from Flask via Gunicorn & Nginx!'\n" }
+        - { path: "requirements.txt", content: "flask\ngunicorn\n" }
+      when: repo_url | length == 0
+      tags: [deploy]
+
+    ######################################################################
+    # Virtualenv + dépendances
+    ######################################################################
+    - name: Créer le virtualenv
+      command: "{{ python_bin }} -m venv {{ venv_path }}"
+      args: { creates: "{{ venv_path }}/bin/activate" }
+
+    - name: Installer dépendances (requirements si présent)
+      shell: |
+        set -e
+        {{ venv_path }}/bin/pip install --upgrade pip
+        if [ -f "{{ app_dir }}/{{ requirements_file }}" ]; then
+          {{ venv_path }}/bin/pip install -r {{ app_dir }}/{{ requirements_file }}
+        else
+          {{ venv_path }}/bin/pip install flask gunicorn
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Assurer les permissions sur l’app
+      file:
+        path: "{{ app_dir }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        recurse: true
+
+    ######################################################################
+    # Service systemd (Gunicorn)
+    ######################################################################
+    - name: Créer le service systemd pour Gunicorn
+      copy:
+        dest: "/etc/systemd/system/{{ service_name }}.service"
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Gunicorn for {{ app_name }}
+          After=network.target
+
+          [Service]
+          User={{ app_user }}
+          Group={{ app_group }}
+          WorkingDirectory={{ app_dir }}
+          Environment="PATH={{ venv_path }}/bin"
+          ExecStart={{ venv_path }}/bin/gunicorn --workers {{ gunicorn_workers }} --timeout {{ gunicorn_timeout }} --bind {{ gunicorn_bind }} {{ wsgi_module }}
+          ExecReload=/bin/kill -s HUP $MAINPID
+          Restart=on-failure
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart gunicorn
+
+    - name: Activer et démarrer Gunicorn
+      systemd:
+        name: "{{ service_name }}"
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    ######################################################################
+    # Nginx reverse-proxy
+    ######################################################################
+    - name: Config Nginx pour l’app
+      copy:
+        dest: "{{ nginx_site_path }}"
+        mode: '0644'
+        content: |
+          # Géré par Ansible
+          server {
+              listen {{ http_port }};
+              listen [::]:{{ http_port }};
+              server_name {{ server_name }};
+              # Proxy vers gunicorn (socket unix)
+              location / {
+                  proxy_pass http://unix:{{ app_dir }}/gunicorn.sock;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+      notify: Reload nginx
+      tags: [nginx, config]
+
+    - name: Valider la configuration Nginx
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+      tags: [nginx, validate]
+
+    - name: Activer et démarrer Nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      tags: [nginx, service]
+
+    ######################################################################
+    # Firewall (optionnel)
+    ######################################################################
+    - name: Ouvrir le port HTTP via UFW (Debian/Ubuntu)
+      command: ufw allow {{ http_port }}/tcp
+      register: ufw_result
+      failed_when: false
+      changed_when: "'Skipping adding' not in ufw_result.stdout"
+      when: ansible_os_family == "Debian" and manage_firewall
+      tags: [firewall]
+
+    - name: Ouvrir le port HTTP via firewalld (RHEL-like)
+      firewalld:
+        port: "{{ http_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      failed_when: false
+      when: ansible_os_family == "RedHat" and manage_firewall
+      tags: [firewall]
+
+  handlers:
+    - name: Restart gunicorn
+      systemd:
+        name: "{{ service_name }}"
+        state: restarted
+        daemon_reload: yes
+
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+

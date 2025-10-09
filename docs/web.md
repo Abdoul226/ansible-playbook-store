@@ -160,4 +160,55 @@ ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-php-apache.yml \
 
 ---
 
-## 4. 
+## 4. Déployer une app Python Flask avec Nginx + Gunicorn (`deploy-flask-nginx-gunicorn.yml`)
+
+**Objectif :**  
+Déployer une appli **Flask** servie par **Gunicorn** (service `systemd`) derrière **Nginx** (reverse-proxy).  
+Supporte un déploiement **depuis Git** ou une **app de démo** prête à tester.
+
+### Variables principales
+```perl
+| Variable | Défaut | Description |
+|---|---|---|
+| `app_name` | `flaskapp` | Nom logique de l’app |
+| `app_dir` | `/opt/flaskapp` | Dossier de l’app |
+| `repo_url` | `""` | Repo Git (laisser vide = app de démo) |
+| `repo_version` | `main` | Branche/tag |
+| `wsgi_module` | `app:app` | Module WSGI (`module:objet`) |
+| `venv_path` | `/opt/flaskapp/venv` | Virtualenv |
+| `gunicorn_bind` | `unix:/opt/flaskapp/gunicorn.sock` | Socket Gunicorn |
+| `gunicorn_workers` | `2` | Workers Gunicorn |
+| `server_name` | `_` | FQDN/Nom vhost (mettre ton domaine) |
+| `http_port` | `80` | Port Nginx |
+| `manage_firewall` | `true` | Ouvrir le port via UFW/firewalld |
+```
+### Exemples
+
+- **Démo immédiate** (hello world) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-flask-nginx-gunicorn.yml
+```
+ - Depuis un repo Git + domaine :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-flask-nginx-gunicorn.yml \
+  -e "repo_url=https://github.com/you/your-flask-app.git repo_version=main server_name=app.example.com app_name=myapp"
+```
+- Ajuster workers et timeout :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/web/deploy-flask-nginx-gunicorn.yml \
+  -e "gunicorn_workers=4 gunicorn_timeout=120"
+```
+**Vérification**
+- `systemctl status gunicorn-<app_name>` → service **actif**
+- `curl -I http://<ip>:<port>` → `200 OK`
+- Naviguer sur `http://<ip>` → “Hello from Flask…”
+
+**Bonnes pratiques**
+- Ajouter ensuite **HTTPS** (Let’s Encrypt) → voir playbook dédié.
+- Pour haut trafic, passer à socket **TCP** (ex: `0.0.0.0:8000`) et tuning Nginx/Gunicorn.
+- Séparer **logs** et monitoring (ex: `nginx_exporter`, Loki/Promtail).
+- Sur RHEL/SELinux enforcing, autoriser Nginx à accéder au socket si besoin (ex: `setsebool -P httpd_can_network_connect 1` ou politique socket).
+
+---
+
+## 5. 
