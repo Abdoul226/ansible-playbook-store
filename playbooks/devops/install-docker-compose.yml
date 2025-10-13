@@ -1,7 +1,7 @@
 ---
 # playbooks/devops/install-docker-compose.yml
 - name: Installer Docker Compose (binaire v1.x standalone)
-  hosts: all
+  hosts: node01
   become: yes
 
   vars:

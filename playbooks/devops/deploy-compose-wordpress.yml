@@ -1,0 +1,139 @@
+---
+# playbooks/devops/deploy-compose-wordpress.yml
+- name: Déployer une stack WordPress + MariaDB avec Docker Compose
+  hosts: all
+  become: yes
+
+  vars:
+    project_name: "wpstack"
+    data_dir: "/srv/compose"           # répertoire racine des stacks
+    wp_port: 8080                      # port exposé côté hôte (http://host:8080)
+    db_image: "mariadb:10.11"
+    wp_image: "wordpress:6.6.2-apache" # adapté au moment: image apache stable
+    db_name: "wordpress"
+    db_user: "wpuser"
+    db_password: "changeme-wpuser"     # ➜ à vault-iser en prod
+    db_root_password: "changeme-root"  # ➜ à vault-iser en prod
+    compose_filename: "docker-compose.yml"
+
+  pre_tasks:
+    - name: Vérifier que Docker est installé
+      command: docker --version
+      register: docker_check
+      failed_when: docker_check.rc != 0
+      changed_when: false
+      tags: [prechecks]
+
+    - name: Détecter la commande Compose (v2 vs v1)
+      shell: |
+        if docker compose version >/dev/null 2>&1; then
+          echo "docker compose"
+        elif command -v docker-compose >/dev/null 2>&1; then
+          echo "docker-compose"
+        else
+          echo "missing"
+        fi
+      args: { executable: /bin/bash }
+      register: compose_cmd
+      changed_when: false
+      tags: [prechecks]
+
+    - name: Échec si Docker Compose est manquant
+      fail:
+        msg: "Docker Compose est introuvable. Installe compose v2 (plugin) via install-docker.yml ou le binaire v1 via install-docker-compose.yml."
+      when: compose_cmd.stdout == "missing"
+      tags: [prechecks]
+
+  tasks:
+    - name: Créer l’arborescence du projet
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "{{ data_dir }}"
+        - "{{ data_dir }}/{{ project_name }}"
+        - "{{ data_dir }}/{{ project_name }}/db"
+        - "{{ data_dir }}/{{ project_name }}/wordpress"
+      tags: [layout]
+
+    - name: Générer docker-compose.yml
+      copy:
+        dest: "{{ data_dir }}/{{ project_name }}/{{ compose_filename }}"
+        mode: '0644'
+        content: |
+          version: "3.8"
+          services:
+            db:
+              image: {{ db_image }}
+              container_name: {{ project_name }}-db
+              restart: unless-stopped
+              environment:
+                MYSQL_DATABASE: {{ db_name }}
+                MYSQL_USER: {{ db_user }}
+                MYSQL_PASSWORD: {{ db_password }}
+                MYSQL_ROOT_PASSWORD: {{ db_root_password }}
+              command: ["--transaction-isolation=READ-COMMITTED", "--binlog-format=ROW"]
+              healthcheck:
+                test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${MYSQL_ROOT_PASSWORD} || exit 1"]
+                interval: 10s
+                timeout: 5s
+                retries: 12
+              volumes:
+                - ./db:/var/lib/mysql
+              networks: [wpnet]
+
+            wordpress:
+              image: {{ wp_image }}
+              container_name: {{ project_name }}-wp
+              depends_on:
+                db:
+                  condition: service_healthy
+              restart: unless-stopped
+              environment:
+                WORDPRESS_DB_HOST: db:3306
+                WORDPRESS_DB_NAME: {{ db_name }}
+                WORDPRESS_DB_USER: {{ db_user }}
+                WORDPRESS_DB_PASSWORD: {{ db_password }}
+              ports:
+                - "{{ wp_port }}:80"
+              volumes:
+                - ./wordpress:/var/www/html
+              networks: [wpnet]
+
+          networks:
+            wpnet:
+              driver: bridge
+      tags: [compose,file]
+
+    - name: Lancer la stack (up -d)
+      shell: |
+        cd {{ data_dir }}/{{ project_name }}
+        {{ compose_cmd.stdout }} -f {{ compose_filename }} up -d
+      args:
+        executable: /bin/bash
+      register: compose_up
+      changed_when: "'Creating' in compose_up.stdout or 'Recreating' in compose_up.stdout or 'Started' in compose_up.stdout"
+      tags: [compose,up]
+
+    - name: Attendre que WordPress réponde sur HTTP
+      uri:
+        url: "http://127.0.0.1:{{ wp_port }}/"
+        method: GET
+        status_code: [200, 301, 302]
+        return_content: false
+      register: wp_http
+      retries: 30
+      delay: 4
+      until: wp_http.status is defined and (wp_http.status in [200,301,302])
+      tags: [verify]
+
+    - name: Afficher l’URL d’accès
+      debug:
+        msg: "WordPress déployé → http://<IP_SERVEUR>:{{ wp_port }}/"
+      tags: [verify]
+
+  # (Optionnel) Handlers inutiles ici car on up/démarre via compose
+

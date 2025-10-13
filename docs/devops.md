@@ -84,6 +84,65 @@ ansible-playbook -i inventory/hosts.ini playbooks/devops/install-docker-compose.
 
 ---
 
-## 3. 
+## 3. Déployer une stack Docker Compose (WordPress + MariaDB) — `deploy-compose-wordpress.yml`
+
+**Objectif :**  
+Déployer **WordPress** + **MariaDB** en Docker Compose, avec persistance des données, healthcheck, et port HTTP exposé.
+
+### Variables
+```perl
+| Variable | Défaut | Description |
+|---|---|---|
+| `project_name` | `wpstack` | Nom logique de la stack (préfixe containers) |
+| `data_dir` | `/srv/compose` | Répertoire racine où vivent les stacks |
+| `wp_port` | `8080` | Port HTTP exposé côté hôte |
+| `db_image` | `mariadb:10.11` | Image base de données |
+| `wp_image` | `wordpress:6.6.2-apache` | Image WordPress |
+| `db_name` | `wordpress` | Nom de la base |
+| `db_user` | `wpuser` | Utilisateur DB |
+| `db_password` | `changeme-wpuser` | Mot de passe DB (vault conseillé) |
+| `db_root_password` | `changeme-root` | Mot de passe root DB (vault conseillé) |
+```
+
+> Les données persistantes sont stockées dans `{{data_dir}}/{{project_name}}/db` (MariaDB) et `{{data_dir}}/{{project_name}}/wordpress` (fichiers WordPress).
+
+### Exemples
+
+- Déploiement standard :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/deploy-compose-wordpress.yml
+```
+- Port 80 + mots de passe Vault :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/deploy-compose-wordpress.yml \
+  -e "wp_port=80 db_password=@vault.txt db_root_password=@vault.txt"
+```
+- Changer les images :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/deploy-compose-wordpress.yml \
+  -e "db_image=mariadb:11.4 wp_image=wordpress:latest"
+```
+
+**Vérification**
+- `docker ps` → 2 conteneurs `wp` & `db` **Up**
+- Naviguer : `http://<IP_SERVEUR>:<wp_port>/` → assistant d’installation WordPress
+- Logs si besoin : `docker logs -f wpstack-wp`
+
+**Bonnes pratiques**
+- **Vault-iser** `db_password` / `db_root_password` (Ansible Vault).
+- Sauvegardes :
+```bash
+# Dump DB
+docker exec -i wpstack-db mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" wordpress > backup.sql
+# Fichiers
+tar -czf wpfiles.tar.gz -C /srv/compose/wpstack/wordpress .
+```
+- Pour **HTTPS**, place un reverse-proxy (Nginx / Caddy) devant, ou utilise ton playbook **Let’s Encrypt** sur le serveur.
+- Pour mises à jour : `docker compose pull` && `docker compose up -d` dans le dossier de la stack.
+
+---
+
+## 4.
+
 
 
