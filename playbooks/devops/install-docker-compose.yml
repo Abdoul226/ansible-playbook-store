@@ -1,0 +1,57 @@
+---
+# playbooks/devops/install-docker-compose.yml
+- name: Installer Docker Compose (binaire v1.x standalone)
+  hosts: all
+  become: yes
+
+  vars:
+    # 📦 Version Docker Compose
+    compose_version: "1.29.2"   # dernière stable v1.x (modifie si besoin)
+    compose_install_path: "/usr/local/bin/docker-compose"
+    compose_symlink_path: "/usr/bin/docker-compose"
+    compose_owner: "root"
+    compose_group: "root"
+    compose_mode: "0755"
+
+    # ✅ SHA256 checksum (optionnel pour vérifier l’intégrité)
+    compose_checksum_url: "https://github.com/docker/compose/releases/download/{{ compose_version }}/docker-compose-{{ ansible_system | lower }}-{{ ansible_architecture }}.sha256"
+
+  tasks:
+    - name: Vérifier la présence de Docker
+      command: docker --version
+      register: docker_check
+      failed_when: docker_check.rc != 0
+      changed_when: false
+
+    - name: Déterminer l’URL du binaire Docker Compose
+      set_fact:
+        compose_url: "https://github.com/docker/compose/releases/download/{{ compose_version }}/docker-compose-{{ ansible_system | lower }}-{{ ansible_architecture }}"
+      tags: [compose, url]
+
+    - name: Télécharger Docker Compose depuis GitHub
+      get_url:
+        url: "{{ compose_url }}"
+        dest: "{{ compose_install_path }}"
+        mode: "{{ compose_mode }}"
+        owner: "{{ compose_owner }}"
+        group: "{{ compose_group }}"
+      tags: [compose, download]
+
+    - name: Créer un lien symbolique vers /usr/bin (pour compatibilité)
+      file:
+        src: "{{ compose_install_path }}"
+        dest: "{{ compose_symlink_path }}"
+        state: link
+      tags: [compose, symlink]
+
+    - name: Vérifier la version installée
+      command: "{{ compose_install_path }} --version"
+      register: compose_version_check
+      changed_when: false
+      tags: [compose, verify]
+
+    - name: Afficher la version de Docker Compose
+      debug:
+        var: compose_version_check.stdout_lines
+      tags: [compose, verify]
+

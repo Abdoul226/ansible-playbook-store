@@ -47,6 +47,43 @@ ansible-playbook -i inventory/hosts.ini playbooks/devops/install-docker.yml \
 
 ---
 
-## 2. 
+## 2. Installer Docker Compose (binaire v1.x standalone) — `install-docker-compose.yml`
+
+**Objectif :**  
+Installer la version **classique** (v1.x) de **Docker Compose** sous `/usr/local/bin`, pour compatibilité avec d’anciens projets ou serveurs CI/CD ne disposant pas de Docker Compose v2 intégré.
+
+### Variables principales
+```perl
+| Variable | Valeur par défaut | Description |
+|-----------|------------------|--------------|
+| `compose_version` | `"1.29.2"` | Version à installer |
+| `compose_install_path` | `/usr/local/bin/docker-compose` | Chemin du binaire |
+| `compose_symlink_path` | `/usr/bin/docker-compose` | Lien symbolique pour compatibilité |
+| `compose_owner` | `root` | Propriétaire du fichier |
+| `compose_mode` | `0755` | Permissions d’exécution |
+```
+
+### Exemples
+
+- **Installation standard :**
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/install-docker-compose.yml
+```
+- **Installation d’une autre version :**
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/install-docker-compose.yml \
+  -e "compose_version=1.28.6"
+```
+**Vérification**
+`docker-compose --version` --> `docker-compose version 1.29.2, build 5becea4c`
+
+**Bonnes pratiques**
+- Pour les environnements récents, **préférer Docker Compose v2** (`docker compose` sans tiret) intégré dans Docker.
+- Conserver ce playbook pour les **CI/CD anciens** (Jenkins, GitLab Runner) où `docker-compose` est requis.
+- Peut être intégré dans une **pipeline Ansible multi-playbooks** (`install-docker.yml` → `install-docker-compose.yml` → `deploy-stack.yml`).
+
+---
+
+## 3. 
 
 

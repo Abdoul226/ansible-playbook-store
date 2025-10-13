@@ -1,7 +1,7 @@
 ---
 # playbooks/devops/install-docker.yml
 - name: Installer Docker CE + Compose v2 (repo officiel)
-  hosts: all
+  hosts: node01
   become: yes
 
   vars:
@@ -17,7 +17,7 @@
       exec-opts:
         - "native.cgroupdriver=systemd"
 
-    # --- Versions (laisser vide = latest stable) ---
+    # --- Paquets Docker officiels (laisser tel quel pour latest stable) ---
     docker_packages:
       - docker-ce
       - docker-ce-cli
@@ -32,7 +32,7 @@
 
   tasks:
     ######################################################################
-    # Debian / Ubuntu
+    # Debian / Ubuntu  — Patch complet (arch + signed-by + keyring)
     ######################################################################
     - name: (Debian/Ubuntu) Supprimer anciens paquets Docker si présents
       apt:
@@ -59,26 +59,49 @@
       when: ansible_os_family == "Debian"
       tags: [docker, prereqs]
 
-    - name: (Debian/Ubuntu) Ajouter la clé GPG Docker
-      apt_key:
-        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
-        state: present
+    - name: (Debian/Ubuntu) Normaliser l’architecture APT
+      set_fact:
+        apt_arch: >-
+          {{ 'amd64' if ansible_architecture in ['x86_64','amd64'] else
+             'arm64' if ansible_architecture in ['aarch64','arm64'] else
+             ansible_architecture }}
+      when: ansible_os_family == "Debian"
+
+    - name: (Debian/Ubuntu) Créer le répertoire de keyrings
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+      when: ansible_os_family == "Debian"
+
+    - name: (Debian/Ubuntu) Installer la clé GPG Docker dans /etc/apt/keyrings/docker.gpg
+      shell: |
+        set -e
+        curl -fsSL https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
       when: ansible_os_family == "Debian"
       tags: [docker, repo]
 
-    - name: (Debian/Ubuntu) Ajouter le dépôt Docker
-      apt_repository:
-        repo: "deb [arch={{ ansible_architecture }}] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_lsb.codename }} stable"
-        state: present
-        filename: docker
+    - name: (Debian/Ubuntu) Ajouter le dépôt Docker (signed-by + arch)
+      copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: '0644'
+        content: |
+          deb [arch={{ apt_arch }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_lsb.codename }} stable
       when: ansible_os_family == "Debian"
       tags: [docker, repo]
+
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
 
     - name: (Debian/Ubuntu) Installer Docker + plugins
       apt:
         name: "{{ docker_packages }}"
         state: present
-        update_cache: yes
       when: ansible_os_family == "Debian"
       tags: [docker, install]
 
@@ -103,7 +126,7 @@
       when: ansible_os_family == "RedHat"
       tags: [docker, cleanup]
 
-    - name: (RHEL-like) Prérequis + gestion de repo
+    - name: (RHEL-like) Prérequis
       package:
         name:
           - yum-utils
