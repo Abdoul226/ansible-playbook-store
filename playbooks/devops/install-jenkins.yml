@@ -1,0 +1,233 @@
+---
+# playbooks/devops/install-jenkins.yml
+- name: Installer et configurer Jenkins (LTS)
+  hosts: node02
+  become: yes
+
+  vars:
+    # ---- Ports / Service ----
+    jenkins_http_port: 8080
+    manage_firewall: true
+
+    # ---- Java (Jenkins >= 2.426+ requiert Java 17) ----
+    java_pkg_debian: "openjdk-17-jdk"
+    java_pkg_rhel: "java-17-openjdk"
+
+    # ---- Auto-config (facultatif) : créer un admin + plugins à l'initialisation ----
+    jenkins_auto_config: false
+    jenkins_admin_user: "admin"
+    jenkins_admin_pass: "ChangeMe123!"     # ➜ vaultisez en prod
+    jenkins_plugins:
+      - git
+      - workflow-aggregator     # pipeline
+      - credentials-binding
+      - blueocean
+
+    # ---- Chemins variables selon OS ----
+    jenkins_svc: jenkins
+    jenkins_default_file: "{{ '/etc/default/jenkins' if ansible_os_family == 'Debian' else '/etc/sysconfig/jenkins' }}"
+    jenkins_home: /var/lib/jenkins
+    jenkins_init_dir: "{{ jenkins_home }}/init.groovy.d"
+    jenkins_cfg: /etc/jenkins
+
+  pre_tasks:
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+  tasks:
+    ######################################################################
+    # Java
+    ######################################################################
+    - name: Installer Java 17 (Debian/Ubuntu)
+      apt:
+        name: "{{ java_pkg_debian }}"
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [java]
+
+    - name: Installer Java 17 (RHEL-like)
+      package:
+        name: "{{ java_pkg_rhel }}"
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [java]
+
+    ######################################################################
+    # Dépôt Jenkins + installation
+    ######################################################################
+    - name: (Debian/Ubuntu) Ajouter clé GPG Jenkins (keyring)
+      shell: |
+        set -e
+        install -m 0755 -d /usr/share/keyrings
+        curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | gpg --dearmor -o /usr/share/keyrings/jenkins-keyring.gpg
+        chmod a+r /usr/share/keyrings/jenkins-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/jenkins-keyring.gpg
+      when: ansible_os_family == "Debian"
+      tags: [repo]
+
+    - name: (Debian/Ubuntu) Ajouter dépôt Jenkins (debian-stable)
+      copy:
+        dest: /etc/apt/sources.list.d/jenkins.list
+        mode: '0644'
+        content: |
+          deb [signed-by=/usr/share/keyrings/jenkins-keyring.gpg] https://pkg.jenkins.io/debian-stable binary/
+      when: ansible_os_family == "Debian"
+      tags: [repo]
+
+    - name: (Debian/Ubuntu) apt update
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: (RHEL-like) Ajouter repo Jenkins
+      get_url:
+        url: https://pkg.jenkins.io/redhat-stable/jenkins.repo
+        dest: /etc/yum.repos.d/jenkins.repo
+        mode: '0644'
+      when: ansible_os_family == "RedHat"
+      tags: [repo]
+
+    - name: (RHEL-like) Importer la clé GPG Jenkins
+      rpm_key:
+        state: present
+        key: https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+      when: ansible_os_family == "RedHat"
+      tags: [repo]
+
+    - name: Installer Jenkins
+      package:
+        name: jenkins
+        state: present
+      tags: [jenkins, install]
+
+    ######################################################################
+    # Configuration service (port) + firewall
+    ######################################################################
+    - name: Forcer le port HTTP Jenkins (fichier défaut)
+      lineinfile:
+        path: "{{ jenkins_default_file }}"
+        regexp: '^JENKINS_PORT='
+        line: "JENKINS_PORT={{ jenkins_http_port }}"
+        create: yes
+      notify: Restart Jenkins
+      tags: [jenkins, config]
+
+    - name: Ouvrir le port via UFW (Debian/Ubuntu)
+      command: ufw allow {{ jenkins_http_port }}/tcp
+      register: ufw_res
+      failed_when: false
+      changed_when: "'Skipping adding' not in (ufw_res.stdout | default(''))"
+      when: ansible_os_family == "Debian" and manage_firewall
+      tags: [firewall]
+
+    - name: Ouvrir le port via firewalld (RHEL-like)
+      firewalld:
+        port: "{{ jenkins_http_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      failed_when: false
+      when: ansible_os_family == "RedHat" and manage_firewall
+      tags: [firewall]
+
+    ######################################################################
+    # (Optionnel) Auto-config de base : admin + plugins via init.groovy
+    ######################################################################
+    - name: Créer le dossier init.groovy.d
+      file:
+        path: "{{ jenkins_init_dir }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: '0755'
+      when: jenkins_auto_config
+
+    - name: Déployer script d’auto-config (création admin + plugins)
+      copy:
+        dest: "{{ jenkins_init_dir }}/00-basic-setup.groovy"
+        owner: jenkins
+        group: jenkins
+        mode: '0644'
+        content: |
+          import jenkins.model.*
+          import hudson.security.*
+          import jenkins.install.InstallState
+
+          def instance = Jenkins.getInstance()
+
+          // Créer realm local + admin si aucun compte
+          def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+          if (hudsonRealm.getAllUsers().isEmpty()) {
+            hudsonRealm.createAccount("{{ jenkins_admin_user }}", "{{ jenkins_admin_pass }}")
+          }
+          instance.setSecurityRealm(hudsonRealm)
+
+          // Stratégie d'autorisations : accès complet uniquement authentifié
+          def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+          strategy.setAllowAnonymousRead(false)
+          instance.setAuthorizationStrategy(strategy)
+          instance.save()
+
+          // Marquer l'installation comme complétée (évite l'assistant)
+          InstallState.INITIAL_SETUP_COMPLETED.initializeState()
+
+          // Installer plugins manquants
+          def uc = instance.getUpdateCenter()
+          uc.updateAllSites()
+          def pm = instance.getPluginManager()
+          def needed = {{ jenkins_plugins | to_json }}
+          def toInstall = needed.findAll { pm.getPlugin(it) == null }
+          if (!toInstall.isEmpty()) {
+            def jobs = toInstall.collect { uc.getPlugin(it).deploy() }
+            jobs.each { it.get() } // attendre la fin
+            instance.save()
+          }
+      when: jenkins_auto_config
+      notify: Restart Jenkins
+      tags: [jenkins, config]
+
+    ######################################################################
+    # Service + vérifications
+    ######################################################################
+    - name: Activer et démarrer Jenkins
+      service:
+        name: "{{ jenkins_svc }}"
+        state: started
+        enabled: yes
+      tags: [jenkins, service]
+
+    - name: Attendre que Jenkins réponde sur le port
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ jenkins_http_port }}"
+        delay: 2
+        timeout: 120
+      tags: [verify]
+
+    - name: Lire le mot de passe initial (si pas d'auto-config)
+      slurp:
+        src: "{{ jenkins_home }}/secrets/initialAdminPassword"
+      register: jenkins_secret
+      when: not jenkins_auto_config
+      tags: [verify]
+
+    - name: Afficher instructions de connexion
+      debug:
+        msg: >-
+          {% if jenkins_auto_config %}
+          Jenkins prêt sur http://<IP>:{{ jenkins_http_port }} — connectez-vous avec {{ jenkins_admin_user }} / (mot de passe fourni).
+          {% else %}
+          Jenkins prêt sur http://<IP>:{{ jenkins_http_port }} — déverrouillez avec le secret :
+          {{ (jenkins_secret.content | b64decode) if (jenkins_secret is defined) else 'SECRET INDISPONIBLE' }}
+          {% endif %}
+      tags: [verify]
+
+  handlers:
+    - name: Restart Jenkins
+      service:
+        name: "{{ jenkins_svc }}"
+        state: restarted
+

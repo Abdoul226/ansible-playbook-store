@@ -1,7 +1,7 @@
 ---
 # playbooks/devops/deploy-compose-wordpress.yml
 - name: Déployer une stack WordPress + MariaDB avec Docker Compose
-  hosts: all
+  hosts: node01
   become: yes
 
   vars:

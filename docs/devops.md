@@ -142,7 +142,47 @@ tar -czf wpfiles.tar.gz -C /srv/compose/wpstack/wordpress .
 
 ---
 
-## 4.
+## 4. Installer Jenkins (LTS) — `install-jenkins.yml`
 
+**Objectif :**  
+Installer **Jenkins LTS** via le **repo officiel**, avec **Java 17**, configuration du **port**, ouverture du **firewall**, démarrage du **service** et affichage du **mot de passe initial**.  
+Optionnel : **créer un admin** et **installer des plugins** automatiquement via `init.groovy.d`.
+
+### Variables
+```perl
+| Variable | Défaut | Description |
+|---|---|---|
+| `jenkins_http_port` | `8080` | Port HTTP |
+| `manage_firewall` | `true` | Ouvrir le port via UFW/firewalld |
+| `java_pkg_debian` | `openjdk-17-jdk` | Paquet Java Debian/Ubuntu |
+| `java_pkg_rhel` | `java-17-openjdk` | Paquet Java RHEL-like |
+| `jenkins_auto_config` | `false` | **Si true** : crée un admin et installe des plugins au 1er démarrage |
+| `jenkins_admin_user` | `admin` | Nom du compte admin auto |
+| `jenkins_admin_pass` | `ChangeMe123!` | Mot de passe admin auto (vaultisez) |
+| `jenkins_plugins` | `['git','workflow-aggregator','credentials-binding','blueocean']` | Plugins à installer (si auto_config) |
+```
+
+### Utilisation
+- **Installation standard** (assistant de déverrouillage) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/install-jenkins.yml
+```
+→ Ouvrez `http://<IP>:8080` et utilisez le secret affiché (fichier …/initialAdminPassword).
+- Auto-config (admin + plugins) :
+```bash
+ansible-playbook -i inventory/hosts.ini playbooks/devops/install-jenkins.yml \
+  -e "jenkins_auto_config=true jenkins_admin_user=admin jenkins_admin_pass='SuperSecret!2025' jenkins_plugins=['git','workflow-aggregator','blueocean']"
+```
+→ Ouvrez `http://<IP>:8080` et connectez-vous directement avec l’admin.
+
+**Bonnes pratiques**
+- **Vaultisez** le mot de passe admin si vous utilisez `jenkins_auto_config`.
+- Placez Jenkins derrière un **reverse proxy** (Nginx/HAProxy) + **HTTPS** (Let’s Encrypt).
+- Sauvegardez `JENKINS_HOME` (`/var/lib/jenkins`) et vos jobs/pipelines.
+- Mettez à jour régulièrement Jenkins et ses plugins.
+
+---
+
+## 5.
 
 
