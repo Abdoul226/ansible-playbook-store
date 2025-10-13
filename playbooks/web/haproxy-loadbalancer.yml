@@ -1,8 +1,9 @@
 ---
 # playbooks/web/haproxy-loadbalancer.yml
 - name: Installer et configurer HAProxy (HTTP/TCP load balancer)
-  hosts: lbservers
+  hosts: webservers
   become: yes
+  gather_facts: yes
 
   vars:
     # ---------- Frontends ----------
@@ -55,19 +56,63 @@
 
   pre_tasks:
     - name: (Debian/Ubuntu) apt update
-      apt:
+      ansible.builtin.apt:
         update_cache: yes
       when: ansible_os_family == "Debian"
 
+    - name: Convertir backends_http si c'est une chaîne
+      set_fact:
+        backends_http: "{{ backends_http | from_yaml }}"
+      when: backends_http is string
+
+    - name: Convertir backends_tcp si c'est une chaîne
+      set_fact:
+        backends_tcp: "{{ backends_tcp | from_yaml }}"
+      when: backends_tcp is string
+
+
+    # -------- Pré-contrôles des variables pour éviter l'erreur 'str object' --------
+    - name: Vérifier cohérence générale
+      ansible.builtin.assert:
+        that:
+          - backend_mode in ['http','tcp']
+          - balance_algo in ['roundrobin','leastconn','source','first','static-rr']
+          - (http_enabled or ssl_termination or tcp_enabled) | bool
+        fail_msg: "Variables incohérentes : vérifie backend_mode/balance_algo et qu'au moins un frontend est activé."
+
+    - name: Vérifier structure backends_http (si HTTP utile)
+      ansible.builtin.assert:
+        that:
+          - backends_http is defined
+          - backends_http | type_debug in ['list','tuple']
+          - (backends_http | select('mapping') | list | length) == (backends_http | length)
+          - (backends_http | map(attribute='name') | select('defined') | list | length) == (backends_http | length)
+          - (backends_http | map(attribute='host') | select('defined') | list | length) == (backends_http | length)
+          - (backends_http | map(attribute='port') | select('defined') | list | length) == (backends_http | length)
+        fail_msg: "backends_http doit être une liste d'objets {name,host,port,...}"
+      when: http_enabled or ssl_termination    
+
+    - name: Vérifier structure backends_tcp (si TCP utilisé)
+      ansible.builtin.assert:
+        that:
+          - backends_tcp is defined
+          - backends_tcp | type_debug in ['list','tuple']
+          - (backends_tcp | select('mapping') | list | length) == (backends_tcp | length)
+          - (backends_tcp | map(attribute='name') | select('defined') | list | length) == (backends_tcp | length)
+          - (backends_tcp | map(attribute='host') | select('defined') | list | length) == (backends_tcp | length)
+          - (backends_tcp | map(attribute='port') | select('defined') | list | length) == (backends_tcp | length)
+        fail_msg: "backends_tcp doit être une liste d'objets {name,host,port,...}"
+      when: tcp_enabled    
+
   tasks:
     - name: Installer HAProxy
-      package:
+      ansible.builtin.package:
         name: haproxy
         state: present
       tags: [haproxy, packages]
 
     - name: Créer répertoire SSL privé (si termination)
-      file:
+      ansible.builtin.file:
         path: "/etc/ssl/private"
         state: directory
         owner: root
@@ -77,7 +122,7 @@
 
     # Si tu dois déposer un PEM : utilise copy/template/vault à part.
     # - name: Déposer le certificat PEM
-    #   copy:
+    #   ansible.builtin.copy:
     #     src: files/haproxy.pem
     #     dest: "{{ ssl_pem_path }}"
     #     owner: root
@@ -86,7 +131,7 @@
     #   when: ssl_termination
 
     - name: Générer la configuration HAProxy
-      copy:
+      ansible.builtin.copy:
         dest: "{{ haproxy_cfg_path }}"
         owner: root
         group: root
@@ -147,8 +192,8 @@
               balance {{ balance_algo }}
               option httpchk GET /health || GET /
               {% if sticky_cookie_enabled %}cookie {{ sticky_cookie_name }} insert indirect nocache{% endif %}
-              {% for s in backends_http %}
-              server {{ s.name }} {{ s.host }}:{{ s.port }} weight {{ s.weight|default(100) }} {% if s.check|default(true) %}check{% endif %} {% if sticky_cookie_enabled %}cookie {{ s.name }}{% endif %}
+              {% for s in backends_http | select('mapping') %}
+              server {{ s.name }} {{ s.host }}:{{ s.port }} weight {{ s.weight|default(100) }} {% if s.check|default(true) %}check{% endif %}{% if sticky_cookie_enabled %} cookie {{ s.name }}{% endif %}
               {% endfor %}
           {% endif %}
 
@@ -157,7 +202,7 @@
               mode tcp
               balance {{ balance_algo }}
               option tcp-check
-              {% for s in backends_tcp %}
+              {% for s in backends_tcp | select('mapping') %}
               server {{ s.name }} {{ s.host }}:{{ s.port }} weight {{ s.weight|default(100) }} {% if s.check|default(true) %}check{% endif %}
               {% endfor %}
           {% endif %}
@@ -165,21 +210,21 @@
       tags: [haproxy, config]
 
     - name: Valider la configuration (haproxy -c)
-      command: "haproxy -c -f {{ haproxy_cfg_path }}"
+      ansible.builtin.command: "haproxy -c -f {{ haproxy_cfg_path }}"
       register: haproxy_check
       changed_when: false
       failed_when: haproxy_check.rc != 0
       tags: [haproxy, validate]
 
     - name: Activer + démarrer HAProxy
-      service:
+      ansible.builtin.service:
         name: haproxy
         state: started
         enabled: yes
       tags: [haproxy, service]
 
     - name: Ouvrir ports HTTP/HTTPS/Stats via UFW (Debian/Ubuntu)
-      command: ufw allow {{ item }}/tcp
+      ansible.builtin.command: ufw allow {{ item }}/tcp
       loop: >-
         {{
           ([http_bind_port] if http_enabled else []) +
@@ -194,7 +239,7 @@
       tags: [firewall]
 
     - name: Ouvrir ports HTTP/HTTPS/Stats via firewalld (RHEL-like)
-      firewalld:
+      ansible.posix.firewalld:
         port: "{{ item }}/tcp"
         permanent: yes
         state: enabled
@@ -212,7 +257,7 @@
 
   handlers:
     - name: Reload haproxy
-      service:
+      ansible.builtin.service:
         name: haproxy
         state: reloaded
 
